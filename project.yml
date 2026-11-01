@@ -61,6 +61,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.tests
         INFOPLIST_FILE: Tests/Support/Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
+        # PRODUCT_NAME of the app target is "KeyDecoder", which XcodeGen cannot
+        # infer from the target name "KeyDecoderApp" — pin the host explicitly.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/KeyDecoder.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/KeyDecoder"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
 schemes:
   KeyDecoder:

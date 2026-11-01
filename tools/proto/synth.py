@@ -117,7 +117,8 @@ def render_scene(rng, sysd, digits, depths, condition):
     first = float(sysd["firstCutIn"]) * IN_MM * p
     spac = float(sysd["spacingIn"]) * IN_MM * p
     npin = int(sysd["pinCount"])
-    blade_len = first + (npin - 1) * spac + 0.22 * IN_MM * p   # tip past last cut
+    tip_overhang = rng.uniform(0.10, 0.16) * IN_MM * p   # realistic tip lead-in
+    blade_len = first + (npin - 1) * spac + tip_overhang
     bow_len, bow_w = 0.55 * IN_MM * p, 0.70 * IN_MM * p
     total = bow_len + blade_len
 
