@@ -45,13 +45,19 @@ open KeyDecoder.xcodeproj
 Run the `KeyDecoder` scheme on a simulator or device (set a signing team for a
 device). All targets build with zero warnings under `-warnings-as-errors` in CI.
 
-### CI artifact (GitHub Actions)
+### Getting the build (GitHub Actions)
 
-`.github/workflows/ios.yml` builds on `macos-15` on every push/PR to `main`:
+`.github/workflows/ios.yml` builds on `macos-15`: a compile check on PRs, and on
+a push to `main`, a `v*` tag, or a manual run it also runs simulator unit tests
+and packages the unsigned `KeyDecoder.ipa` (`Payload/KeyDecoder.app`, built with
+`CODE_SIGNING_ALLOWED=NO`).
 
-- **test** job — unit tests on the iPhone 17 simulator.
-- **ipa** job — one artifact, the unsigned `KeyDecoder.ipa`
-  (`Payload/KeyDecoder.app`, built with `CODE_SIGNING_ALLOWED=NO`).
+The fastest way to install it is the downloads page, which always links the
+latest release of each project: <https://spencergraffunder.github.io/pianobar-ios/>.
+The same `.ipa` is also attached to the GitHub **release** here — the rolling
+`ios-latest` release on every `main` push, or the matching tag for a `v*` push.
+Release assets download as the **bare `.ipa`**; the run artifact is a zip-wrapped
+convenience copy, not the download path.
 
 The IPA is **unsigned** (the project assumes no paid Apple developer account).
 Re-sign at install time with a free Apple ID using AltStore / Sideloadly /
