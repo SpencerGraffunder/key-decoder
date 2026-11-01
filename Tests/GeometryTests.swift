@@ -87,6 +87,28 @@ final class GeometryTests: XCTestCase {
         XCTAssertFalse(CardQuality.isPlausibleCardQuad(square, imageArea: 1100 * 1100))
     }
 
+    func testCardSuggestGateTiers() {
+        // Strong perspective can foreshorten the card below the strict gate's
+        // 1.30 aspect floor; it must still be usable as an editor suggestion.
+        let foreshortened: [CGPoint] = [
+            CGPoint(x: 200, y: 100), CGPoint(x: 1400, y: 60),
+            CGPoint(x: 1420, y: 1060), CGPoint(x: 180, y: 1100),
+        ]
+        XCTAssertFalse(CardQuality.isPlausibleCardQuad(foreshortened, imageArea: 2000 * 2000))
+        XCTAssertTrue(CardQuality.isSuggestableCardQuad(foreshortened, imageArea: 2000 * 2000))
+        // Squares and specks fail even the relaxed gate.
+        let square: [CGPoint] = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 1000, y: 0),
+            CGPoint(x: 1000, y: 1000), CGPoint(x: 0, y: 1000),
+        ]
+        XCTAssertFalse(CardQuality.isSuggestableCardQuad(square, imageArea: 1100 * 1100))
+        let tiny: [CGPoint] = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 300, y: 0),
+            CGPoint(x: 300, y: 190), CGPoint(x: 0, y: 190),
+        ]
+        XCTAssertFalse(CardQuality.isSuggestableCardQuad(tiny, imageArea: 2000 * 2000))
+    }
+
     func testIdentityWarpPreservesImage() throws {
         let w = 32, h = 24
         var pixels = [UInt8](repeating: 0, count: w * h)

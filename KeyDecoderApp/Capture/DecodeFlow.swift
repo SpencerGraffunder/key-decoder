@@ -67,11 +67,18 @@ final class DecodeFlow {
 
     private func detectCard(in cg: CGImage) async {
         let found = await Task.detached(priority: .userInitiated) {
-            CardDetector.detectCardQuad(in: cg)
+            CardDetector.detect(in: cg)
         }.value
-        if let quad = found {
-            self.quad = quad
-            await analyze(with: quad, cg: cg)
+        if let d = found, d.confident {
+            self.quad = d.quad
+            await analyze(with: d.quad, cg: cg)
+        } else if let d = found {
+            // Low-confidence detection: seed the editor with the suggested
+            // corners — confirming or nudging beats dragging four blanks, and
+            // a suggestion is never auto-applied.
+            quad = d.quad
+            cardDetectionFailed = false
+            step = .cardEditor
         } else {
             quad = nil
             cardDetectionFailed = true

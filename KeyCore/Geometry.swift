@@ -201,6 +201,18 @@ public enum CardQuality {
         return true
     }
 
+    /// Relaxed gate used ONLY for low-confidence suggestions that must be
+    /// confirmed by a human before use: strong perspective foreshortening or a
+    /// partially cropped card can sit outside the strict auto-apply gate while
+    /// still being a far better editor starting point than default corners.
+    public static func isSuggestableCardQuad(_ quad: [CGPoint], imageArea: Double) -> Bool {
+        guard quad.count == 4 else { return false }
+        let aspect = QuadOrdering.aspect(quad)
+        guard aspect >= 1.10, aspect <= 2.20 else { return false }
+        guard imageArea > 0, QuadOrdering.area(quad) / imageArea >= 0.06 else { return false }
+        return true
+    }
+
     /// Score in [0, ∞); higher = more card-like (area × aspect closeness to ID-1).
     public static func score(_ quad: [CGPoint], imageArea: Double) -> Double {
         let aspect = QuadOrdering.aspect(quad)

@@ -5,33 +5,75 @@ import CoreGraphics
 import Foundation
 import Vision
 
-/// Auto-detection of the ISO ID-1 reference card via Vision rectangle detection.
+/// Auto-detection of the ISO ID-1 reference card via Vision.
 /// Failure always returns nil — the UI must then offer the manual four-handle path.
 public enum CardDetector {
-    /// Blocking call — run on a background queue. Returns the quad ordered
-    /// TL,TR,BR,BL in y-down pixel coordinates of `image`, or nil.
+    public struct CardDetection: Equatable {
+        /// Quad ordered TL,TR,BR,BL in y-down pixel coordinates of the image.
+        public let quad: [CGPoint]
+        /// true → passed the strict auto-apply gate; false → best available
+        /// suggestion, must be confirmed (seed the manual editor with it).
+        public let confident: Bool
+    }
+
+    /// Blocking call — run on a background queue. Confident quad or nil.
     public static func detectCardQuad(in image: CGImage) -> [CGPoint]? {
-        let request = VNDetectRectanglesRequest()
-        request.maximumObservations = 16
-        request.minimumSize = 0.12
-        request.minimumAspectRatio = 0.4
-        request.quadratureTolerance = 25
-        request.minimumConfidence = 0.35
+        guard let d = detect(in: image), d.confident else { return nil }
+        return d.quad
+    }
+
+    /// Two Vision detectors, two confidence tiers: rectangle + contour
+    /// observations are pooled, the strict gate tries first, then the relaxed
+    /// suggestion gate. A suggestion is never auto-applied.
+    public static func detect(in image: CGImage) -> CardDetection? {
+        let rectangles = VNDetectRectanglesRequest()
+        rectangles.maximumObservations = 16
+        rectangles.minimumSize = 0.12
+        rectangles.minimumAspectRatio = 0.4
+        rectangles.quadratureTolerance = 25
+        rectangles.minimumConfidence = 0.35
+
+        let contours = VNDetectContoursRequest()
+        contours.maximumObservations = 32
+        contours.contrastAdjustment = 1.7
+        contours.minimumSize = 0.12
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        var candidates = [VNRectangleObservation]()
-        do {
-            try handler.perform([request])
-            candidates = (request.results ?? []).filter { $0.confidence >= 0.35 }
-        } catch {
-            return nil
+        do { try handler.perform([rectangles, contours]) } catch { return nil }
+
+        var observations: [VNRectangleObservation] = []
+        observations.append(contentsOf: rectangles.results ?? [])
+        observations.append(contentsOf: contours.results ?? [])
+        let usable = observations.filter { $0.confidence >= 0.30 }
+        guard !usable.isEmpty else { return nil }
+
+        if let quad = pickCard(from: usable, pixelWidth: image.width, pixelHeight: image.height) {
+            return CardDetection(quad: quad, confident: true)
         }
-        return pickCard(from: candidates, pixelWidth: image.width, pixelHeight: image.height)
+        if let quad = pickSuggestable(from: usable, pixelWidth: image.width, pixelHeight: image.height) {
+            return CardDetection(quad: quad, confident: false)
+        }
+        return nil
     }
 
     /// Pure selection logic (testable without Vision): score rectangle observations as cards.
     public static func pickCard(
         from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int
+    ) -> [CGPoint]? {
+        pick(from: observations, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+             gate: CardQuality.isPlausibleCardQuad)
+    }
+
+    static func pickSuggestable(
+        from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int
+    ) -> [CGPoint]? {
+        pick(from: observations, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+             gate: CardQuality.isSuggestableCardQuad)
+    }
+
+    private static func pick(
+        from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int,
+        gate: ([CGPoint], Double) -> Bool
     ) -> [CGPoint]? {
         let imageArea = Double(pixelWidth * pixelHeight)
         var bestQuad: [CGPoint]?
@@ -40,7 +82,7 @@ public enum CardDetector {
             guard let quad = orderedQuad(
                 observation: obs, pixelWidth: pixelWidth, pixelHeight: pixelHeight
             ) else { continue }
-            guard CardQuality.isPlausibleCardQuad(quad, imageArea: imageArea) else { continue }
+            guard gate(quad, imageArea) else { continue }
             let score = CardQuality.score(quad, imageArea: imageArea)
             if score > bestScore { bestScore = score; bestQuad = quad }
         }
