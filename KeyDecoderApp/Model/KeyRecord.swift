@@ -1,4 +1,5 @@
 import Foundation
+import KeyCore
 import SwiftData
 
 /// A saved key. Photos live on disk (ImageStore); this record references them.

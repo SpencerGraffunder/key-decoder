@@ -1,4 +1,5 @@
 import Foundation
+import KeyCore
 import SwiftData
 
 /// Codable transfer record — one file holds the whole library for backup/restore.

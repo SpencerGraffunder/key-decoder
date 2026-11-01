@@ -1,4 +1,5 @@
 import SwiftData
+import KeyCore
 import SwiftUI
 import UniformTypeIdentifiers
 
