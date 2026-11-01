@@ -111,7 +111,7 @@ struct SettingsView: View {
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls), let url = urls.first else {
+        guard case .success(let urls) = result, let url = urls.first else {
             statusMessage = "Import cancelled."
             return
         }
