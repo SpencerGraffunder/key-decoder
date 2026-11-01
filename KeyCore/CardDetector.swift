@@ -97,32 +97,34 @@ public enum CardDetector {
                     CGPoint(x: maxX, y: minY), CGPoint(x: minX, y: minY),
                 ])
             }
+            func acc(_ p: CGPoint) {
+                minX = min(minX, p.x); maxX = max(maxX, p.x)
+                minY = min(minY, p.y); maxY = max(maxY, p.y)
+                pointCount += 1
+            }
+            // Dispatch on the raw C values, not the imported Swift cases:
+            // CGPathElementType's Swift spelling has churned between SDKs
+            // (.lineToPoint vs .AddLineToPoint vs .addLineToPoint), but the
+            // underlying CGGeometry.h enum order has been ABI-stable since
+            // the 90s (1=move, 2=line, 3=quad, 4=cubic, 5=close).
             path.applyWithBlock { elementPtr in
                 let element = elementPtr.pointee
-                switch element.type {
-                case .moveToPoint:
+                switch element.type.rawValue {
+                case 1: // kCGPathElementMoveToPoint — starts a new subpath
                     finishSubpath()
-                    let p = element.points[0]
-                    minX = min(minX, p.x); maxX = max(maxX, p.x)
-                    minY = min(minY, p.y); maxY = max(maxY, p.y)
-                    pointCount += 1
-                case .lineToPoint:
-                    let p = element.points[0]
-                    minX = min(minX, p.x); maxX = max(maxX, p.x)
-                    minY = min(minY, p.y); maxY = max(maxY, p.y)
-                    pointCount += 1
-                case .curveToPoint:
-                    // Include both control points and the endpoint: cheap
-                    // over-approximation of the curve's bbox.
-                    for i in 0..<3 {
-                        let p = element.points[i]
-                        minX = min(minX, p.x); maxX = max(maxX, p.x)
-                        minY = min(minY, p.y); maxY = max(maxY, p.y)
-                        pointCount += 1
-                    }
-                case .closeSubpath:
+                    acc(element.points[0])
+                case 2: // kCGPathElementAddLineToPoint
+                    acc(element.points[0])
+                case 3: // kCGPathElementAddQuadCurveToPoint — ctrl + endpoint
+                    acc(element.points[0])
+                    acc(element.points[1])
+                case 4: // kCGPathElementAddCurveToPoint — two ctrls + endpoint
+                    acc(element.points[0])
+                    acc(element.points[1])
+                    acc(element.points[2])
+                case 5: // kCGPathElementCloseSubpath
                     finishSubpath()
-                @unknown default:
+                default: // kCGPathElementEmpty
                     break
                 }
             }
