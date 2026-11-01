@@ -71,7 +71,15 @@ public enum MeasurementPipeline {
                 ), dir
             ))
         }
-        let picked = results.min(by: { $0.result.score < $1.result.score })!
+        // Prototype-validated tie-breakers (tools/proto/REPORT.md §"headless
+        // direction"): a mirrored grid can only align by sliding the offset scan,
+        // so penalize far offsets and grids that run past the blade; residuals
+        // alone are provably ambiguous when the depth multiset reads in reverse.
+        func selectionScore(_ r: CutScanResult) -> Double {
+            let deltaIn = abs(r.params.offsetPx) / scene.pixelsPerMm / 25.4
+            return r.score + 0.05 * max(0, deltaIn - 0.030) + (r.gridBeyondBlade ? 0.10 : 0)
+        }
+        let picked = results.min(by: { selectionScore($0.result) < selectionScore($1.result) })!
         let output = picked.result
 
         let shoulderEnd = scene.blade.headPresent
