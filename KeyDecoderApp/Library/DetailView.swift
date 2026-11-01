@@ -66,7 +66,6 @@ struct DetailView: View {
         .confirmationDialog(
             "Delete this key? Its photos will be removed from this device.",
             isPresented: $showDeleteConfirm,
-            title: nil,
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) { delete() }
