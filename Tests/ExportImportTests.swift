@@ -12,6 +12,28 @@ final class ExportImportTests: XCTestCase {
         return try ModelContainer(for: KeyRecord.self, configurations: config)
     }
 
+    /// Whole-epoch-second timestamps. The JSON export round-trips dates
+    /// bit-exactly, but the SwiftData store stores dates as SQLite TIMESTAMP
+    /// (days-since-2001, REAL) and adds up to ~100ns of representation
+    /// jitter, so fixtures must not carry sub-100ns precision or equality
+    /// assertions against fetched objects flake.
+    private func makePinnedRecords() -> [KeyRecord] {
+        [
+            KeyRecord(
+                id: UUID(), label: "Front door", notes: "Re-keyed 2024",
+                tags: ["door", "house"], code: "1-5-3-2-4",
+                systemID: "kw1", systemName: "Kwikset KW1",
+                createdAt: Date(timeIntervalSince1970: 1_717_000_000)
+            ),
+            KeyRecord(
+                id: UUID(), label: "Shed,with comma", notes: "Quote \" test",
+                tags: ["shed"], code: "3-0-6-1-8",
+                systemID: "sc1", systemName: "Schlage SC1",
+                createdAt: Date(timeIntervalSince1970: 1_717_003_600)
+            ),
+        ]
+    }
+
     private func makeRecords() -> [KeyRecord] {
         [
             KeyRecord(
@@ -30,7 +52,7 @@ final class ExportImportTests: XCTestCase {
     func testJSONRoundTripPreservesEverything() throws {
         let container = try makeContainer()
         let context = container.mainContext
-        for record in makeRecords() { context.insert(record) }
+        for record in makePinnedRecords() { context.insert(record) }
         try context.save()
         let records = try context.fetch(FetchDescriptor<KeyRecord>())
 
