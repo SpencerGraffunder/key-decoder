@@ -1,30 +1,39 @@
 #
-# iOS CI — build the KeyDecoder iOS app and produce one unsigned .ipa artifact.
+# iOS CI — build the KeyDecoder iOS app and publish an unsigned .ipa.
 #
 #   build      — on PRs / branch pushes that touch app code: compile check only.
-#   tests+ipa  — on a push to main (or manual "Run workflow"): simulator unit
-#                tests, then a Release build packaged as KeyDecoder.ipa and
-#                uploaded as the single run artifact (Actions → Artifacts).
+#   tests-ipa  — on a push to main, a tag push (v*), or manual "Run workflow":
+#                simulator unit tests, then a Release build packaged as
+#                KeyDecoder.ipa — uploaded as a run artifact AND published as
+#                a GitHub Release. Tag pushes publish under their tag name;
+#                everything else refreshes the rolling 'ios-latest' release.
 #
 # The .ipa is UNSIGNED by design (free app, no paid Apple developer account):
 # re-sign it with your free Apple ID via Sideloadly / AltStore / Xcode to install.
+#
+# Download path: the GitHub Release asset is the BARE .ipa (Actions run
+# artifacts are always zip-wrapped, so they are convenience copies only).
 #
 name: ios
 
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
+# Needed to publish the .ipa as a release asset.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     if: >-
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && github.ref != 'refs/heads/main')
+      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') &&
+       github.ref != 'refs/heads/main')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +55,7 @@ jobs:
 
   tests-ipa:
     if: >-
+      startsWith(github.ref, 'refs/tags/') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: macos-latest
@@ -101,3 +111,25 @@ jobs:
           name: KeyDecoder.ipa
           path: KeyDecoder.ipa
           if-no-files-found: error
+
+      - name: Publish .ipa as GitHub Release (bare file, no zip)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Tag pushes publish under their tag name; everything else
+          # refreshes the rolling 'ios-latest' release. Release assets
+          # download as the bare .ipa — that is the download path the
+          # pianobar-ios site links to (Actions artifacts are always
+          # zipped, hence they are convenience copies only).
+          TAG=ios-latest
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" KeyDecoder.ipa --clobber
+          else
+            gh release create "$TAG" KeyDecoder.ipa \
+              --title "iOS build ($TAG)" \
+              --notes "Unsigned .ipa from CI. Re-sign with Sideloadly / AltStore / an ad-hoc profile to install."
+          fi
+          gh release view "$TAG"
