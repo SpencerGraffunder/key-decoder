@@ -15,7 +15,8 @@ public func otsuThreshold(histogram: [Int], total: Int) -> UInt8 {
     for v in 0..<256 { sum += Double(v * histogram[v]) }
     var sumB = 0.0
     var wB = 0.0
-    var bestT = 0
+    var bestLo = 0
+    var bestHi = 0
     var bestVar = -1.0
     for t in 0..<256 {
         wB += Double(histogram[t])
@@ -26,12 +27,19 @@ public func otsuThreshold(histogram: [Int], total: Int) -> UInt8 {
         let mB = sumB / wB
         let mF = (sum - sumB) / wF
         let between = wB * wF * (mB - mF) * (mB - mF)
-        if between > bestVar {
+        // Track the FULL band of thresholds attaining max between-class
+        // variance (a gap between two modes yields a wide plateau) and return
+        // its midpoint, so the threshold lands between the modes, not on the
+        // near edge of the plateau.
+        if between > bestVar + max(bestVar, 1) * 1e-9 {
             bestVar = between
-            bestT = t
+            bestLo = t
+            bestHi = t
+        } else if abs(between - bestVar) <= max(bestVar, 1) * 1e-9 {
+            bestHi = t
         }
     }
-    return UInt8(bestT)
+    return UInt8((bestLo + bestHi) / 2)
 }
 
 // MARK: - Morphology (3x3 square structuring element)

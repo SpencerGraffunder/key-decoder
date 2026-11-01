@@ -51,7 +51,9 @@ public struct KeySystemDefinition: Codable, Equatable, Identifiable {
             digit: bestIndex + firstCode,
             residualIn: bestDist,
             marginSteps: margin,
-            outOfTable: margin > 0.5,
+            // 1e-9 tolerance: (a+b)/2 depths land at 0.5 + 1 ulp of binary
+            // noise; the spec boundary is STRICTLY greater than 0.5.
+            outOfTable: margin > 0.5 + 1e-9,
             nearBoundary: margin > 0.35
         )
     }

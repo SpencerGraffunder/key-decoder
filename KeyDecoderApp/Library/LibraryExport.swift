@@ -48,14 +48,22 @@ enum LibraryExport {
 
     static func encode(_ file: LibraryExportFile) throws -> Data {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        // .iso8601 truncates to whole seconds and silently shaves sub-second
+        // timestamps; epoch-double round-trips bit-exactly.
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var c = encoder.singleValueContainer()
+            try c.encode(date.timeIntervalSince1970)
+        }
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(file)
     }
 
     static func decode(_ data: Data) throws -> LibraryExportFile {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let c = try decoder.singleValueContainer()
+            return Date(timeIntervalSince1970: try c.decode(Double.self))
+        }
         return try decoder.decode(LibraryExportFile.self, from: data)
     }
 
