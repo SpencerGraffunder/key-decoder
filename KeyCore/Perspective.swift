@@ -59,7 +59,7 @@ public enum Perspective {
                     let p01 = Double(src.bytes[(y1 * src.width + x0) * 4 + c])
                     let p11 = Double(src.bytes[(y1 * src.width + x1) * 4 + c])
                     let v = (p00 * (1 - tx) + p10 * tx) * (1 - ty) + (p01 * (1 - tx) + p11 * tx) * ty
-                    out[o + c] = UInt8(min(255, (v + 0.5).rounded()))
+                    out[o + c] = UInt8(min(255, v.rounded()))
                 }
             }
         }
@@ -82,7 +82,10 @@ public enum Perspective {
         let p00 = Double(img.pixel(x0, y0)), p10 = Double(img.pixel(x1, y0))
         let p01 = Double(img.pixel(x0, y1)), p11 = Double(img.pixel(x1, y1))
         let v = (p00 * (1 - tx) + p10 * tx) * (1 - ty) + (p01 * (1 - tx) + p11 * tx) * ty
-        return UInt8(min(255, (v + 0.5).rounded()))
+        // Plain nearest-rounding: (v + 0.5).rounded() is NOT half-up — with the
+        // sub-ulp noise of an inverted homography (n + 1e-10) it crosses the
+        // .5 boundary and biases every positive-noise pixel up by 1.
+        return UInt8(min(255, v.rounded()))
     }
 
     private static func clampedFractional(x: CGFloat, y: CGFloat, w: Int, h: Int) -> (Double, Double) {
