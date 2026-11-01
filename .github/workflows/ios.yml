@@ -1,0 +1,103 @@
+#
+# iOS CI — build the KeyDecoder iOS app and produce one unsigned .ipa artifact.
+#
+#   build      — on PRs / branch pushes that touch app code: compile check only.
+#   tests+ipa  — on a push to main (or manual "Run workflow"): simulator unit
+#                tests, then a Release build packaged as KeyDecoder.ipa and
+#                uploaded as the single run artifact (Actions → Artifacts).
+#
+# The .ipa is UNSIGNED by design (free app, no paid Apple developer account):
+# re-sign it with your free Apple ID via Sideloadly / AltStore / Xcode to install.
+#
+name: ios
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Compile check (Release, unsigned, no tests)
+        run: |
+          xcodebuild -project KeyDecoder.xcodeproj -scheme KeyDecoderApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath dd \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="-" \
+            build
+
+  tests-ipa:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -E 'iphonesimulator|iphoneos'
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Run unit tests (iOS simulator)
+        run: |
+          SIM=$(xcrun simctl list devices available --json \
+                | jq -r '.devices[] | .[] | select(.name | contains("iPhone")) | .name' \
+                | head -1)
+          echo "Using simulator: $SIM"
+          xcodebuild -project KeyDecoder.xcodeproj -scheme KeyDecoderApp \
+            -destination "platform=iOS Simulator,name=$SIM" \
+            -derivedDataPath dd-sim \
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            test
+
+      - name: Build Release for iOS device
+        run: |
+          xcodebuild -project KeyDecoder.xcodeproj -scheme KeyDecoderApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath dd-device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="-" \
+            build
+
+      - name: Assemble .ipa
+        run: |
+          APP=$(find dd-device/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          echo "Bundling $APP"
+          mkdir -p ipa-staging/Payload
+          cp -R "$APP" ipa-staging/Payload/
+          cd ipa-staging
+          zip -qry ../KeyDecoder.ipa Payload
+          cd ..
+          ls -lh KeyDecoder.ipa
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeyDecoder.ipa
+          path: KeyDecoder.ipa
+          if-no-files-found: error

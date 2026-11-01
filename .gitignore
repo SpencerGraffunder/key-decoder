@@ -1,0 +1,8 @@
+.DS_Store
+xcuserdata/
+*.xcuserstate
+build/
+DerivedData/
+*.xcodeproj
+KeyDecoderApp/Support/KeyDecoder.app.csv
+KeyDecoderApp/Support/KeyDecoder.app.json

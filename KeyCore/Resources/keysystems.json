@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "units": "inches, root depth measured from the blade top (spine) to the cut root",
+  "systems": [
+    {
+      "id": "kw1",
+      "name": "Kwikset KW1",
+      "manufacturer": "Kwikset / Weiser (residential)",
+      "status": "verified",
+      "pinCount": 5,
+      "alignment": "shoulder",
+      "firstCutIn": 0.247,
+      "spacingIn": 0.150,
+      "incrementIn": 0.023,
+      "firstCode": 1,
+      "depthsIn": [0.329, 0.306, 0.283, 0.260, 0.237, 0.214],
+      "cutWidthIn": 0.080,
+      "macs": 4,
+      "bladeWidthIn": null,
+      "sources": [
+        "Lockwiki 'Kwikset Classic' keying specs: shoulder-to-first .247, root-to-root .150, increment .023, depths 1-.329 ... 6-.214, MACS 4, cut width .080",
+        "bryan-wendt.com/docs/resources/pinning-specs space/depth matrix (Kwikset row)"
+      ],
+      "notes": "Published spacing is .150 (root to root); some write-ups quote .153 — .150 used, see docs/SOURCES.md."
+    },
+    {
+      "id": "sc1",
+      "name": "Schlage SC1",
+      "manufacturer": "Schlage Classic (residential, 5-pin)",
+      "status": "verified",
+      "pinCount": 5,
+      "alignment": "shoulder",
+      "firstCutIn": 0.231,
+      "spacingIn": 0.156,
+      "incrementIn": 0.015,
+      "firstCode": 0,
+      "depthsIn": [0.335, 0.320, 0.305, 0.290, 0.275, 0.260, 0.245, 0.230, 0.215, 0.200],
+      "cutWidthIn": 0.070,
+      "macs": 7,
+      "bladeWidthIn": 0.343,
+      "sources": [
+        "LSA Michigan 'SCHLAGE KeyBitting Specifications' PDF (lsamichigan.org/Tech/SCHLAGE_KeySpecs.pdf): increment .015, MACS 7, blade width .343, depths 0-.335 ... 9-.200",
+        "Framon code-machine info: Schlage .231 starting cut, .156 spacing",
+        "bryan-wendt.com/docs/resources/pinning-specs (Schlage Classic row: TFC .231 shoulder stop, BCC .156)"
+      ],
+      "notes": "Root depth tolerance +.002/-0, spacing +-0.001 per Schlage sheet. 5-pin residential; 6-pin variant is sc1-6p."
+    },
+    {
+      "id": "sc1-6p",
+      "name": "Schlage SC1 (6-pin)",
+      "manufacturer": "Schlage (C-series commercial style, 6-pin)",
+      "status": "verified",
+      "pinCount": 6,
+      "alignment": "shoulder",
+      "firstCutIn": 0.231,
+      "spacingIn": 0.156,
+      "incrementIn": 0.015,
+      "firstCode": 0,
+      "depthsIn": [0.335, 0.320, 0.305, 0.290, 0.275, 0.260, 0.245, 0.230, 0.215, 0.200],
+      "cutWidthIn": 0.070,
+      "macs": 7,
+      "bladeWidthIn": 0.343,
+      "sources": [
+        "Same Schlage Classic depth/space tables as sc1; sixth cut at .231 + 5*.156 = 1.011 in from the shoulder"
+      ],
+      "notes": "6-pin cylinders with the Classic space/depth chart (e.g. C-series 6-pin). Unverified on a physical 6-pin key — treat code output for the 6th cut with the app's normal uncertainty flags."
+    },
+    {
+      "id": "yale-y114",
+      "name": "Yale Y114",
+      "manufacturer": "Yale standard",
+      "status": "draft",
+      "pinCount": 5,
+      "alignment": "shoulder",
+      "firstCutIn": 0.214,
+      "spacingIn": 0.150,
+      "incrementIn": 0.019,
+      "firstCode": 0,
+      "depthsIn": [0.320, 0.301, 0.282, 0.263, 0.244, 0.225, 0.206, 0.187, 0.168, 0.149],
+      "cutWidthIn": 0.034,
+      "macs": 4,
+      "bladeWidthIn": null,
+      "sources": [
+        "bryan-wendt.com/docs/resources/pinning-specs (Yale Standard row: .019 inc, 0-9 .320-.149, TFC .214, BCC .150)"
+      ],
+      "notes": "Draft: single source, not cross-checked against a manufacturer sheet. Depth array derived as .320 - code*.019."
+    },
+    {
+      "id": "sargent-r6",
+      "name": "Sargent R6",
+      "manufacturer": "Sargent",
+      "status": "draft",
+      "pinCount": 6,
+      "alignment": "shoulder",
+      "firstCutIn": 0.215,
+      "spacingIn": 0.156,
+      "incrementIn": 0.020,
+      "firstCode": 1,
+      "depthsIn": [0.330, 0.310, 0.290, 0.270, 0.250, 0.230, 0.210, 0.190, 0.170],
+      "cutWidthIn": 0.050,
+      "macs": 7,
+      "bladeWidthIn": null,
+      "sources": [
+        "bryan-wendt.com/docs/resources/pinning-specs (Sargent row: .020 inc, 1-9 .330-.170, TFC .215, BCC .156)"
+      ],
+      "notes": "Draft: single source. Depth array derived as .330 - (code-1)*.020. Pin count 6 typical for R6 but not in the cited table."
+    },
+    {
+      "id": "arrow-b",
+      "name": "Arrow B (LA)",
+      "manufacturer": "Arrow / Lockwood",
+      "status": "draft",
+      "pinCount": 5,
+      "alignment": "shoulder",
+      "firstCutIn": 0.264,
+      "spacingIn": 0.155,
+      "incrementIn": 0.014,
+      "firstCode": 0,
+      "depthsIn": [0.324, 0.310, 0.296, 0.282, 0.268, 0.254, 0.240, 0.226, 0.212, 0.198],
+      "cutWidthIn": 0.052,
+      "macs": 7,
+      "bladeWidthIn": null,
+      "sources": [
+        "bryan-wendt.com/docs/resources/pinning-specs (Arrow row: .014 inc, 0-9 .324-.198, TFC .264, BCC .155)"
+      ],
+      "notes": "Draft: single source. Depth array derived as .324 - code*.014."
+    },
+    {
+      "id": "master-standard",
+      "name": "Master Lock standard (4-pin padlock)",
+      "manufacturer": "Master Lock",
+      "status": "draft",
+      "pinCount": 4,
+      "alignment": "shoulder",
+      "firstCutIn": 0.185,
+      "spacingIn": 0.125,
+      "incrementIn": 0.015,
+      "firstCode": 0,
+      "depthsIn": [0.285, 0.270, 0.255, 0.240, 0.225, 0.210, 0.195, 0.180],
+      "cutWidthIn": 0.040,
+      "macs": 4,
+      "bladeWidthIn": null,
+      "sources": [
+        "bryan-wendt.com/docs/resources/pinning-specs (Master Lock Standard row: .015 inc, 0-7 .285-.180, TFC .185, BCC .125)"
+      ],
+      "notes": "Draft: single source. Master makes many padlock families; treat as unverified."
+    }
+  ]
+}
