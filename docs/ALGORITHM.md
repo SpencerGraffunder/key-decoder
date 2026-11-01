@@ -38,9 +38,13 @@ in [1.30, 1.90]; else treat detection as failed → manual path.
    darker or lighter plastic heads, and bright specular metal on a light card.
 4. Threshold D with Otsu.
 5. Morphological close (3x3, 2 iterations) then open (3x3, 1 iteration).
-6. Keep the largest connected component (8-connected). If its area < 1.5% of
-   card area or its bounding-box aspect along its principal axis < 2.5, fail →
-   manual path.
+6. Connected-component pick (8-connected): among components with area ≥ 1.5%
+   of card area, prefer the most ELONGATED one — pixel-covariance aspect
+   sqrt(λ1/λ2) ≥ 2.5 — breaking ties by area. A split ring or fob resting on
+   the card (rounder, sometimes larger) must not hijack a plain largest-area
+   pick; the key may keep its ring, and the bow may hang off the card. If no
+   component is elongated, keep the largest; if the kept component ends below
+   1.5% area or aspect < 2.5, fail → manual path.
 7. Fill holes (background components not connected to the image border).
 
 ### 3. Blade geometry
@@ -62,8 +66,9 @@ From the key mask CC:
    head counts as PRESENT only if the run spans ≥ 0.10". The blade band =
    complement.
    - Head present on one end → that end is BOW side (u small after sign flip).
-   - No head (plastic blends into the card): both ends are blade ends; resolve
-     direction later (3f).
+   - No head (plastic blends into the card, OR the bow hangs off the card edge
+     with the whole cut row on it — a supported capture mode): both ends are
+     blade ends; resolve direction later (3f).
 5. Spine side = the side (top/bot) with smaller robust residual when a line is
    fitted to its profile over the blade band. Line fit: least squares, then one
    pass dropping points with |residual| > 2.5×MAD, refit. Cut side = other side.

@@ -62,7 +62,8 @@ public enum KeySegmentation {
         mask = Morphology.close(mask, w, h, iterations: 2)
         mask = Morphology.open(mask, w, h, iterations: 1)
 
-        let (blob, area) = ConnectedComponents.largestComponent(mask, w, h)
+        // Elongation-aware pick: an on-card ring/fob must not hijack the key.
+        let (blob, area, _) = ConnectedComponents.bestKeyComponent(mask, w, h)
         let fraction = Double(area) / Double(w * h)
         guard fraction >= 0.015 else { return nil }
         let filled = ConnectedComponents.fillHoles(blob, w, h)

@@ -92,6 +92,57 @@ public enum Morphology {
 // MARK: - Connected components
 
 public enum ConnectedComponents {
+    /// Pick the component most likely to be a key: among components of at
+    /// least `minAreaFraction` of the card, prefer the one with the most
+    /// elongated pixel-covariance aspect (sqrt(λ1/λ2) ≥ minAspect), largest
+    /// area among those. This keeps a split ring or fob lying on the card —
+    /// often rounder, sometimes larger than the key — from hijacking a plain
+    /// largest-area pick. Falls back to the largest component when none is
+    /// elongated, so downstream aspect gates still route to the manual path.
+    /// Returns (mask, pixelCount, aspectOfPick).
+    public static func bestKeyComponent(
+        _ mask: [Bool], _ w: Int, _ h: Int,
+        minAreaFraction: Double = 0.015, minAspect: Double = 2.5
+    ) -> ([Bool], Int, Double) {
+        let ids = label(mask, w, h)
+        guard let ids else {
+            let (m, n) = largestComponent(mask, w, h)
+            return (m, n, 0)
+        }
+        var counts = [Int: Int](), sx = [Int: Double](), sy = [Int: Double]()
+        var sxx = [Int: Double](), syy = [Int: Double](), sxy = [Int: Double]()
+        for i in ids.indices {
+            let l = ids[i]
+            guard l > 0 else { continue }
+            let x = Double(i % w), y = Double(i / w)
+            counts[l, default: 0] += 1
+            sx[l, default: 0] += x; sy[l, default: 0] += y
+            sxx[l, default: 0] += x * x; syy[l, default: 0] += y * y; sxy[l, default: 0] += x * y
+        }
+        let minArea = minAreaFraction * Double(w * h)
+        struct Cand { let l: Int, n: Int, aspect: Double }
+        var elig = [Cand](), all = [Cand]()
+        for (l, n) in counts where Double(n) >= minArea {
+            let nd = Double(n)
+            let mx = sx[l]! / nd, my = sy[l]! / nd
+            let cxx = max(sxx[l]! / nd - mx * mx, 0)
+            let cyy = max(syy[l]! / nd - my * my, 0)
+            let cxy = sxy[l]! / nd - mx * my
+            let tr = cxx + cyy, det = cxx * cyy - cxy * cxy
+            let disc = (tr * tr / 4 - det).squareRoot()
+            let l1 = tr / 2 + disc
+            let l2 = max(tr / 2 - disc, 1e-9)
+            let aspect = (l1 / l2).squareRoot()
+            all.append(Cand(l: l, n: n, aspect: aspect))
+            if aspect >= minAspect { elig.append(Cand(l: l, n: n, aspect: aspect)) }
+        }
+        guard let pick = elig.max(by: { $0.n < $1.n }) ?? all.max(by: { $0.n < $1.n }) else {
+            return (Array(repeating: false, count: mask.count), 0, 0)
+        }
+        let out = ids.map { $0 == pick.l }
+        return (out, pick.n, pick.aspect)
+    }
+
     /// Keep only the largest 8-connected component. Returns (mask, pixelCount).
     public static func largestComponent(_ mask: [Bool], _ w: Int, _ h: Int) -> ([Bool], Int) {
         let labels = label(mask, w, h)

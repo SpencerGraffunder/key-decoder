@@ -34,7 +34,7 @@ struct CameraSheet: View {
                 qualityBadge
                     .padding(.top, 8)
                 Spacer()
-                Text("Key off the ring, flat on an ID / credit card, inside the dashed card outline.")
+                Text("Key flat on an ID / credit card, inside the dashed outline. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .padding(8)

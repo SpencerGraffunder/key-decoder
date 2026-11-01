@@ -31,6 +31,8 @@ final class SyntheticKeyTests: XCTestCase {
         var shadowBand = false    // dark vertical band across the card
         var headVisible = true
         var photoDownscale: Double = 1.0
+        var keyShiftIn = 0.0      // slide the whole key along the card length
+        var ringOnCard = false    // split-ring donut resting on the card
     }
 
     /// Draw the top-down card face with a key (spine up, cuts on the bottom edge).
@@ -39,7 +41,7 @@ final class SyntheticKeyTests: XCTestCase {
     ) -> GrayImage {
         let w = Self.cardWidthPx, h = Self.cardHeightPx, ppmIn = Self.ppmIn
         let bladeWidth = system.bladeWidthIn ?? 0.36
-        let shoulderX = 1.3 * ppmIn
+        let shoulderX = (1.3 + style.keyShiftIn) * ppmIn
         let spineY = 0.82 * ppmIn
         let bladeBottom = spineY + bladeWidth * ppmIn
         let lastCutX = shoulderX
@@ -110,6 +112,19 @@ final class SyntheticKeyTests: XCTestCase {
             }
         }
 
+        if style.ringOnCard {
+            // 0.9" split ring lying flat near the card's right end, same gray
+            // level as the key: an accessory pick must not hijack the blob.
+            let cx = 2.85 * ppmIn, cy = 0.62 * ppmIn
+            let ro = 0.45 * ppmIn, ri = 0.30 * ppmIn
+            for y in 0..<h {
+                for x in 0..<w {
+                    let dx = Double(x) - cx, dy = Double(y) - cy
+                    let r2v = dx * dx + dy * dy
+                    if r2v <= ro * ro && r2v >= ri * ri { put(x, y, keyLevel) }
+                }
+            }
+        }
         if style.noise > 0 {
             for i in 0..<(w * h) {
                 let n = Double.random(in: -style.noise...style.noise, using: &rng)
@@ -286,6 +301,28 @@ final class SyntheticKeyTests: XCTestCase {
         let out = try XCTUnwrap(decode(system: kw1, code: code, style: style, seed: 8000))
         XCTAssertEqual(out.result.cuts.map(\.digit), code,
                        "headless direction failed: \(out.result.codeString)")
+    }
+
+    func testRingOnCardDoesNotHijackBlob() throws {
+        // Spec §2.6: prefer the elongated component; the key may keep its ring
+        // and a loose ring on the card must not win the blob pick.
+        let kw1 = try system("kw1")
+        let code = [2, 5, 1, 6, 3]
+        var style = SceneStyle(); style.ringOnCard = true
+        let out = try XCTUnwrap(decode(system: kw1, code: code, style: style, seed: 12000))
+        XCTAssertEqual(out.result.cuts.map(\.digit), code,
+                       "ring-on-card: \(out.result.codeString)")
+    }
+
+    func testBowOffCardEdgeDecodes() throws {
+        // Supported capture mode: only the bitting sits on the card; the bow
+        // hangs off the left edge. Headless path must resolve direction.
+        let kw1 = try system("kw1")
+        let code = [4, 1, 6, 2, 5]
+        var style = SceneStyle(); style.headVisible = false; style.keyShiftIn = -1.15
+        let out = try XCTUnwrap(decode(system: kw1, code: code, style: style, seed: 12500))
+        XCTAssertEqual(out.result.cuts.map(\.digit), code,
+                       "bow-off-card: \(out.result.codeString)")
     }
 
     func testLowResStillMostlyCorrect() throws {

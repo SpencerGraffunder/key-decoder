@@ -59,10 +59,16 @@ Twine, or build from Xcode with your personal team for a 7-day signed build.
 
 ## Photographing a key for best results
 
-- Take the key **off its ring**; a fob or split ring skews segmentation.
+- **The ring can stay on.** Keep the ring itself off the card when you can —
+  a fob lying flat on the card defeats segmentation. A ring merely touching
+  the bow is usually absorbed by the head logic; anything left over is flagged
+  for manual review rather than silently mismeasured.
 - Use a **plain, lightly textured card** (a worn white card beats a glossy
   brand-new one; shiny metallic card finishes are the hardest case).
-- Lay the key **flat, fully inside the card**, blade parallel to a card edge.
+- **Only the bitting needs to be on the card.** The bow may hang off any edge:
+  with the whole cut row on the card the decoder runs its headless path and
+  resolves direction from the cut spacing. Keep the blade parallel to a card
+  edge. Cuts themselves hanging off the card produce warnings, not numbers.
 - **Soft, broad light** from roughly above; avoid direct flash (specular blowout
   on metal) and side light (cast shadows). The camera overlay shows a
   "too tilted / too dark / hold steady" hint while framing.
@@ -157,8 +163,8 @@ grid-fits-blade and blade-length sanity checks.
   IPA must be re-signed for install (AltStore/Sideloadly) or built in Xcode.
 - Automatic card detection needs Vision (iOS 17+); detection quality drops on
   glossy/metallic card finishes — the manual four-corner path exists for this.
-- One key per photo. Partially visible keys and keys hanging off the card give
-  warnings rather than measurements.
+- One key per photo. The bow may hang off the card (headless decode); if the
+  **cuts** run past the card edge you get warnings rather than measurements.
 - Colored-plastic key heads are handled by the blade-only blob fallback, but a
   head whose color matches the card can still defeat segmentation — manual
   review (or re-shooting on a different card) is the recovery path.
