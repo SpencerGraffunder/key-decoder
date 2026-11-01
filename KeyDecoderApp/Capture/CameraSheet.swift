@@ -34,7 +34,7 @@ struct CameraSheet: View {
                 qualityBadge
                     .padding(.top, 8)
                 Spacer()
-                Text("Key flat on an ID / credit card, inside the dashed outline. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
+                Text("Key flat inside the dashed outline, brand side up and readable, BOW (handle) to the LEFT. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .padding(8)
@@ -119,13 +119,17 @@ final class CameraController: NSObject {
     @ObservationIgnored private let photoOutput = AVCapturePhotoOutput()
     @ObservationIgnored private let videoOutput = AVCaptureVideoDataOutput()
     @ObservationIgnored private let sampleQueue = DispatchQueue(label: "keydecoder.camera.samples")
+    // Serial queue owns every session state transition; re-entry (Retake ->
+    // fresh CameraSheet) must never interleave start/stop/capture.
+    @ObservationIgnored private let sessionQueue = DispatchQueue(label: "keydecoder.camera.session")
     @ObservationIgnored private let motion = CMMotionManager()
     @ObservationIgnored private var configured = false
     @ObservationIgnored private var lastBrightnessPublish = Date.distantPast
 
     func start() {
         if !configured { configureSession() }
-        DispatchQueue.global(qos: .userInitiated).async { [session] in
+        sessionQueue.async { [session] in
+            guard !session.isRunning else { return }
             session.startRunning()
         }
         if motion.isDeviceMotionAvailable {
@@ -142,19 +146,26 @@ final class CameraController: NSObject {
     }
 
     func stop() {
-        DispatchQueue.global(qos: .userInitiated).async { [session] in
+        sessionQueue.async { [session] in
+            guard session.isRunning else { return }
             session.stopRunning()
         }
         motion.stopDeviceMotionUpdates()
     }
 
     func capture() {
-        let settings = AVCapturePhotoSettings()
-        if let connection = photoOutput.connection(with: .video),
-           connection.isVideoRotationAngleSupported(90) {
+        sessionQueue.async { [session, photoOutput] in
+            guard session.isRunning,
+                  let connection = photoOutput.connection(with: .video),
+                  connection.isActive,
+                  connection.isVideoRotationAngleSupported(90)
+            else {
+                DispatchQueue.main.async { self.lastError = "Camera warming up — try again in a moment" }
+                return
+            }
             connection.videoRotationAngle = 90
+            photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
         }
-        photoOutput.capturePhoto(with: settings, delegate: self)
     }
 
     var qualityHint: (String, Color) {

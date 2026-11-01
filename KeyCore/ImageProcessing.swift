@@ -92,6 +92,28 @@ public enum Morphology {
 // MARK: - Connected components
 
 public enum ConnectedComponents {
+    /// 4-connected flood fill from a seed pixel; returns the component mask
+    /// and pixel count, or (empty, 0) when the seed is not on a set pixel.
+    public static func component(atX x: Int, y: Int, in mask: [Bool], _ w: Int, _ h: Int)
+        -> ([Bool], Int)
+    {
+        var out = [Bool](repeating: false, count: w * h)
+        guard x >= 0, y >= 0, x < w, y < h, mask[y * w + x] else { return (out, 0) }
+        var stack = [y * w + x]
+        out[y * w + x] = true
+        var n = 1
+        while let i = stack.popLast() {
+            let cx = i % w, cy = i / w
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let nx = cx + dx, ny = cy + dy
+                guard nx >= 0, ny >= 0, nx < w, ny < h else { continue }
+                let j = ny * w + nx
+                if mask[j], !out[j] { out[j] = true; n += 1; stack.append(j) }
+            }
+        }
+        return (out, n)
+    }
+
     /// Pick the component most likely to be a key: among components of at
     /// least `minAreaFraction` of the card, prefer the one with the most
     /// elongated pixel-covariance aspect (sqrt(λ1/λ2) ≥ minAspect), largest

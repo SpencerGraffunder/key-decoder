@@ -174,6 +174,55 @@ final class DecodeFlow {
         self.params = params
     }
 
+    /// "That's not my key" fix: re-run the whole pipeline treating the tapped
+    /// point as the key blob. Image coordinates = corrected-view pixels.
+    func pickKeyRegion(atImagePoint point: CGPoint) {
+        guard let photoCG = photo?.cgImage, let quad, let system = currentSystem else { return }
+        step = .processing
+        let seed = CGPoint(x: point.x, y: point.y)
+        Task { @MainActor in
+            let rebuilt = await Task.detached(priority: .userInitiated) { ()
+                -> (color: RGBAImage, scene: MeasurementPipeline.Scene,
+                    out: MeasurementPipeline.Output,
+                    suggestions: [SystemSuggestion])? in
+                guard let corrected = MeasurementPipeline.correct(photo: photoCG, quad: quad),
+                      let scene = MeasurementPipeline.analyzeScene(
+                          corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm, seed: seed
+                      )
+                else { return nil }
+                var suggestions = SystemSuggester.suggest(
+                    scene: scene, candidates: KeySystemLibrary.defaultCandidates()
+                )
+                if let correctedCG = corrected.color.toCGImage() {
+                    let texts = BowStampReader.readText(in: correctedCG)
+                    if !texts.isEmpty {
+                        suggestions = SystemSuggester.applyStamp(
+                            texts: texts, candidates: KeySystemLibrary.defaultCandidates(),
+                            to: suggestions
+                        )
+                    }
+                }
+                return (corrected.color, scene,
+                        MeasurementPipeline.measure(scene: scene, system: system), suggestions)
+            }.value
+            guard let rebuilt else {
+                statusMessage = "Couldn't find a key region where you tapped — tap directly on the metal."
+                step = .review
+                return
+            }
+            scene = rebuilt.scene
+            pixelsPerMm = rebuilt.scene.pixelsPerMm
+            correctedImage = rebuilt.color.toCGImage().map { UIImage(cgImage: $0) }
+            suggestions = rebuilt.suggestions
+            result = rebuilt.out.result
+            params = rebuilt.out.result.params
+            warnings = rebuilt.out.warnings
+            manualDigits = []
+            statusMessage = ""
+            step = .review
+        }
+    }
+
     func dragShoulder(toImagePoint point: CGPoint) {
         guard let blade = scene?.blade, var params else { return }
         params.shoulderU = blade.uv(point).u
@@ -238,6 +287,9 @@ final class DecodeFlow {
     }
 
     func retake() {
+        // Move away from every screen that renders from this state FIRST —
+        // observers may re-render per mutation, not per batch.
+        step = .capture
         quad = nil
         correctedImage = nil
         scene = nil
@@ -248,7 +300,6 @@ final class DecodeFlow {
         manualDigits = []
         cardDetectionFailed = false
         statusMessage = ""
-        step = .capture
     }
 }
 

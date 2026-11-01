@@ -8,6 +8,7 @@ struct CardQuadEditorView: View {
     let flow: DecodeFlow
 
     @State private var quad: [CGPoint]
+    @State private var loupeFocus: CGPoint?
 
     init(image: UIImage, flow: DecodeFlow) {
         self.image = image
@@ -55,12 +56,18 @@ struct CardQuadEditorView: View {
                             .gesture(
                                 DragGesture(minimumDistance: 0)
                                     .onChanged { value in
-                                        quad[i] = fit.clampedToImage(value.location)
+                                        let p = fit.clampedToImage(value.location)
+                                        quad[i] = p
+                                        loupeFocus = p
                                     }
+                                    .onEnded { _ in loupeFocus = nil }
                             )
                             .accessibilityLabel("Card corner \(i + 1)")
                     }
                 }
+                .modifier(LoupeOverlay(
+                    image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
+                ))
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal)

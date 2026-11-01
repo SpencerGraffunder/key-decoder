@@ -14,7 +14,12 @@ public struct KeyMaskResult {
 public enum KeySegmentation {
     /// Segment the key from the card face. Returns nil when nothing key-sized is found —
     /// every caller must then offer the manual path, never a dead end.
-    public static func segment(_ image: GrayImage, pixelsPerMm: Double) -> KeyMaskResult? {
+    /// `seed` overrides the automatic pick: the component CONTAINING the seed
+    /// pixel becomes the key blob (manual "that's not my key" correction).
+    /// Returns nil when the seed lands on background.
+    public static func segment(
+        _ image: GrayImage, pixelsPerMm: Double, seed: (x: Int, y: Int)? = nil
+    ) -> KeyMaskResult? {
         let w = image.width, h = image.height
         guard w > 64, h > 64 else { return nil }
         let margin = max(2, Int((2.0 * pixelsPerMm).rounded()))
@@ -63,9 +68,18 @@ public enum KeySegmentation {
         mask = Morphology.open(mask, w, h, iterations: 1)
 
         // Elongation-aware pick: an on-card ring/fob must not hijack the key.
-        let (blob, area, _) = ConnectedComponents.bestKeyComponent(mask, w, h)
+        var blob: [Bool], area: Int
+        if let seed {
+            (blob, area) = ConnectedComponents.component(atX: seed.x, y: seed.y, in: mask, w, h)
+            // Seeded picks may legitimately be small (blade-only keys) but must
+            // not be specks; 0.4% of the card floor filters noise.
+            guard area > 0, Double(area) / Double(w * h) >= 0.004 else { return nil }
+        } else {
+            (blob, area, _) = ConnectedComponents.bestKeyComponent(mask, w, h)
+            let fraction = Double(area) / Double(w * h)
+            guard fraction >= 0.015 else { return nil }
+        }
         let fraction = Double(area) / Double(w * h)
-        guard fraction >= 0.015 else { return nil }
         let filled = ConnectedComponents.fillHoles(blob, w, h)
 
         return KeyMaskResult(

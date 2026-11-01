@@ -54,8 +54,11 @@ public enum MeasurementPipeline {
     #endif
 
     /// Corrected view → key mask + blade geometry. nil → manual review path.
-    public static func analyzeScene(corrected: GrayImage, pixelsPerMm: Double) -> Scene? {
-        guard let mask = KeySegmentation.segment(corrected, pixelsPerMm: pixelsPerMm),
+    public static func analyzeScene(
+        corrected: GrayImage, pixelsPerMm: Double, seed: CGPoint? = nil
+    ) -> Scene? {
+        let seedPair = seed.map { (x: Int($0.x.rounded()), y: Int($0.y.rounded())) }
+        guard let mask = KeySegmentation.segment(corrected, pixelsPerMm: pixelsPerMm, seed: seedPair),
               let blade = BladeAnalyzer.analyze(mask) else { return nil }
         return Scene(corrected: corrected, mask: mask, blade: blade, pixelsPerMm: pixelsPerMm)
     }

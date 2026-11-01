@@ -6,11 +6,17 @@ import KeyCore
 struct ReviewView: View {
     let flow: DecodeFlow
 
+    /// Image-space point under the finger while dragging a marker (loupe focus).
+    @State private var loupeFocus: CGPoint?
+    /// "That's not my key" mode: next tap re-segments at the tapped blob.
+    @State private var pickMode = false
+
     var body: some View {
         VStack(spacing: 0) {
             header
             if let result = flow.result, flow.scene != nil {
                 markersView(result)
+                pickKeyRow
                 cutList(result)
             } else {
                 manualEntry
@@ -56,32 +62,47 @@ struct ReviewView: View {
         .padding(.top, 4)
     }
 
-    /// Up to three ranked systems with the evidence behind each; tap to switch.
+    /// Top three ranked systems — the CURRENT one highlighted first — each
+    /// carrying the evidence behind it ("stamped "KW1"", "spacing ~.151 · 5
+    /// cuts"). Tap any other to switch instantly.
     private var suggestionChips: some View {
-        let shown = flow.suggestions
-            .filter { $0.system.id != flow.systemID }
-            .prefix(3)
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                if !shown.isEmpty {
-                    Label("Best match:", systemImage: "wand.and.stars")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-                ForEach(Array(shown), id: \.system.id) { s in
-                    Button {
-                        flow.setSystem(s.system.id)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(s.system.name).font(.caption.weight(.semibold))
-                            if let reason = s.reason {
-                                Text(reason).font(.caption2).foregroundStyle(.secondary)
-                                    .lineLimit(1)
+        let shown = flow.suggestions.prefix(3)
+        return Group {
+            if !shown.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Label("System:", systemImage: "wand.and.stars")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        ForEach(Array(shown), id: \.system.id) { s in
+                            let isCurrent = s.system.id == flow.systemID
+                            Button {
+                                if !isCurrent { flow.setSystem(s.system.id) }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(spacing: 3) {
+                                        if isCurrent {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 9))
+                                        }
+                                        Text(s.system.name).font(.caption.weight(.semibold))
+                                    }
+                                    Text(isCurrent
+                                         ? (s.reason ?? "in use")
+                                         : (s.reason ?? "tap to switch"))
+                                        .font(.caption2)
+                                        .foregroundStyle(isCurrent ? .primary.opacity(0.75) : .secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 8).padding(.vertical, 3)
                             }
+                            .buttonStyle(isCurrent ? AnyButtonStyle(.borderedProminent)
+                                                   : AnyButtonStyle(.bordered))
+                            .buttonBorderShape(.capsule)
+                            .accessibilityLabel(isCurrent
+                                ? "\(s.system.name), current system"
+                                : "\(s.system.name). \(s.reason ?? "Switch to it")")
                         }
-                        .padding(.horizontal, 6).padding(.vertical, 2)
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
                 }
             }
         }
@@ -141,7 +162,21 @@ struct ReviewView: View {
                         overlayLines(blade: blade, params: params, result: result, fit: fit)
                         handles(blade: blade, result: result, fit: fit, size: geo.size)
                     }
+
+                    if pickMode {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                pickAttemptFeedback = flow.statusMessage
+                                flow.statusMessage = ""
+                                flow.pickKeyRegion(atImagePoint: fit.clampedToImage(location))
+                                pickMode = false
+                            }
+                    }
                 }
+                .modifier(LoupeOverlay(
+                    image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
+                ))
             }
             .frame(minHeight: 240)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -200,13 +235,13 @@ struct ReviewView: View {
             if let params = flow.params {
                 handle(position: fit.toView(
                     blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))
-                ), color: .yellow, label: "Shoulder line") { point in
+                ), color: .yellow, label: "Shoulder line", loupeMap: { fit.clampedToImage($0) }) { point in
                     flow.dragShoulder(toImagePoint: fit.toImage(point))
                 }
                 let spineMidU = (params.shoulderU + blade.tipU) / 2
                 handle(position: fit.toView(
                     blade.xy(u: spineMidU, v: params.spine.v(at: spineMidU))
-                ), color: .cyan, label: "Spine line") { point in
+                ), color: .cyan, label: "Spine line", loupeMap: { fit.clampedToImage($0) }) { point in
                     flow.dragSpine(toImagePoint: fit.toImage(point))
                 }
             }
@@ -218,7 +253,8 @@ struct ReviewView: View {
                     color: cut.isManualOverride ? .blue
                         : cut.outOfTable ? .red
                         : cut.lowConfidence ? .orange : .green,
-                    label: "Cut \(cut.index + 1) center"
+                    label: "Cut \(cut.index + 1) center",
+                    loupeMap: { fit.clampedToImage($0) }
                 ) { point in
                     flow.dragCut(cut.index, toImagePoint: fit.toImage(point))
                 }
@@ -227,7 +263,11 @@ struct ReviewView: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
-    private func handle(position: CGPoint, color: Color, label: String, action: @escaping (CGPoint) -> Void) -> some View {
+    private func handle(
+        position: CGPoint, color: Color, label: String,
+        loupeMap: @escaping (CGPoint) -> CGPoint = { $0 },
+        action: @escaping (CGPoint) -> Void
+    ) -> some View {
         // Ring, not a disc: a solid dot hides the very cut you are aligning.
         Circle()
             .fill(.white.opacity(0.12))
@@ -238,11 +278,51 @@ struct ReviewView: View {
             .position(position)
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { value in action(value.location) }
+                    .onChanged { value in
+                        action(value.location)
+                        loupeFocus = loupeMap(value.location)
+                    }
+                    .onEnded { _ in loupeFocus = nil }
             )
             .accessibilityLabel(label)
             .accessibilityHint("Drag to adjust")
     }
+
+    /// "the app grabbed the wrong object" escape hatch.
+    private var pickKeyRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                pickMode.toggle()
+            } label: {
+                Label(pickMode ? "Cancel" : "Wrong key area? Tap the key",
+                      systemImage: "hand.tap")
+            }
+            .font(.caption)
+            .buttonStyle(.bordered)
+            if pickMode {
+                Text("Now tap directly on the key blade")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .overlay(alignment: .top) {
+            // Pick-failure feedback from the flow (re-pick attempts only).
+            if pickAttemptFeedback != nil && !flow.statusMessage.isEmpty {
+                Text(flow.statusMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .padding(6)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+    }
+
+    /// Snapshot of the pre-tap statusMessage; shown only if the tap changes it
+    /// (i.e. it becomes the re-pick failure notice). Cleared on any change.
+    @State private var pickAttemptFeedback: String? = nil
+
 
     // MARK: - Cut list
 
@@ -333,7 +413,7 @@ struct ReviewView: View {
                         .frame(maxHeight: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                ForEach(0..<max(1, flow.manualDigits.count), id: \.self) { index in
+                ForEach(flow.manualDigits.indices, id: \.self) { index in
                     HStack {
                         Text("Cut \(index + 1)")
                         Spacer()
