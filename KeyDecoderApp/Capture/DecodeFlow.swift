@@ -103,9 +103,20 @@ final class DecodeFlow {
                     corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm
                   )
             else { return nil }
-            let suggestions = SystemSuggester.suggest(
+            var suggestions = SystemSuggester.suggest(
                 scene: scene, candidates: KeySystemLibrary.defaultCandidates()
             )
+            // Factory-stamped brand text outranks geometry guessing when present.
+            if let correctedCG = corrected.color.toCGImage() {
+                let texts = BowStampReader.readText(in: correctedCG)
+                if !texts.isEmpty {
+                    suggestions = SystemSuggester.applyStamp(
+                        texts: texts,
+                        candidates: KeySystemLibrary.defaultCandidates(),
+                        to: suggestions
+                    )
+                }
+            }
             let best = suggestions.first?.system ?? system
             let output = MeasurementPipeline.measure(scene: scene, system: best)
             return AutoOutcome(

@@ -60,6 +60,12 @@ struct SettingsView: View {
                 }
 
                 Section("Key systems") {
+                    NavigationLink {
+                        KeyIDGuideView()
+                    } label: {
+                        Label("Key ID guide \u{2014} tell keys apart without calipers",
+                              systemImage: "questionmark.circle")
+                    }
                     ForEach(KeySystemLibrary.bundled) { system in
                         KeySystemRow(system: system)
                     }

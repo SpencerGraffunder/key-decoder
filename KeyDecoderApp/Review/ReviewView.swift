@@ -19,6 +19,16 @@ struct ReviewView: View {
         }
         .navigationTitle("Review cuts")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    KeyIDGuideView()
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                }
+                .accessibilityLabel("Key ID guide")
+            }
+        }
     }
 
     // MARK: - Header
@@ -32,17 +42,7 @@ struct ReviewView: View {
                 Spacer()
                 systemMenu
             }
-            if let suggestion = flow.topSuggestion,
-               suggestion.system.id != flow.systemID,
-               uncertainCount == 0 || suggestion.score < (flow.result?.score ?? .greatestFiniteMagnitude) {
-                Button {
-                    flow.setSystem(suggestion.system.id)
-                } label: {
-                    Label("Looks like \(suggestion.system.name) — switch", systemImage: "wand.and.stars")
-                        .font(.caption.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-            }
+            suggestionChips
             if uncertainCount > 0 {
                 Label(
                     "\(uncertainCount) cut(s) uncertain — nudge markers or set digits manually.",
@@ -54,6 +54,37 @@ struct ReviewView: View {
         }
         .padding(.horizontal)
         .padding(.top, 4)
+    }
+
+    /// Up to three ranked systems with the evidence behind each; tap to switch.
+    private var suggestionChips: some View {
+        let shown = flow.suggestions
+            .filter { $0.system.id != flow.systemID }
+            .prefix(3)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if !shown.isEmpty {
+                    Label("Best match:", systemImage: "wand.and.stars")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                ForEach(Array(shown), id: \.system.id) { s in
+                    Button {
+                        flow.setSystem(s.system.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(s.system.name).font(.caption.weight(.semibold))
+                            if let reason = s.reason {
+                                Text(reason).font(.caption2).foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                }
+            }
+        }
     }
 
     private var systemMenu: some View {
@@ -197,9 +228,11 @@ struct ReviewView: View {
     }
 
     private func handle(position: CGPoint, color: Color, label: String, action: @escaping (CGPoint) -> Void) -> some View {
+        // Ring, not a disc: a solid dot hides the very cut you are aligning.
         Circle()
-            .fill(.white)
-            .overlay(Circle().stroke(color, lineWidth: 3))
+            .fill(.white.opacity(0.12))
+            .overlay(Circle().stroke(color, lineWidth: 2.5))
+            .overlay(Circle().fill(color).frame(width: 4, height: 4))
             .frame(width: 26, height: 26)
             .shadow(radius: 2)
             .position(position)

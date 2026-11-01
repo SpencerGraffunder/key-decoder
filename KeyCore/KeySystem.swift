@@ -28,8 +28,13 @@ public struct KeySystemDefinition: Codable, Equatable, Identifiable {
     public let bladeWidthIn: Double?
     public let sources: [String]
     public let notes: String?
+    /// Text commonly stamped/engraved on the bow or blade for this system
+    /// ("KW1", "KWKSET", ...). Optional: absent in older JSON loads.
+    public var stamps: [String]? = nil
 
     public var isVerified: Bool { status == "verified" }
+
+    public var stampAliases: [String] { stamps ?? [] }
 
     public var digitRange: Range<Int> { firstCode ..< (firstCode + depthsIn.count) }
 
@@ -66,6 +71,40 @@ public struct DigitLookup: Codable, Equatable {
     public let marginSteps: Double
     public let outOfTable: Bool
     public let nearBoundary: Bool
+}
+
+/// Stamped brand matching for the OCR'd bow text (advisory, never auto-final).
+public enum BowStamp {
+    public struct Match: Equatable {
+        public let system: KeySystemDefinition
+        public let text: String
+        public let hits: Int
+    }
+
+    /// Normalizes OCR strings (uppercase alphanumerics only) and matches them
+    /// against system ids and stamp aliases. The alias matching more distinct
+    /// OCR strings wins; ties break toward the earlier candidate.
+    public static func match(texts: [String], in systems: [KeySystemDefinition]) -> Match? {
+        func norm(_ s: String) -> String {
+            s.uppercased().filter { $0.isLetter || $0.isNumber }
+        }
+        let bag = texts.map(norm).filter { !$0.isEmpty }
+        guard !bag.isEmpty else { return nil }
+        var best: Match?
+        for system in systems {
+            let aliases = Set(([system.id] + system.stampAliases).map(norm).filter { !$0.isEmpty })
+            var hits = 0
+            var firstText = ""
+            for text in bag where aliases.contains(text) {
+                hits += 1
+                if firstText.isEmpty { firstText = text }
+            }
+            if hits > (best?.hits ?? 0) {
+                best = Match(system: system, text: firstText, hits: hits)
+            }
+        }
+        return best
+    }
 }
 
 /// Wrapper for Resources/keysystems.json.

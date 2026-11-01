@@ -134,6 +134,16 @@ penalty plus measured-depth RMS residual under S's table; top suggestion +
 runner-up shown in the UI, manual override always available. If detected
 scallop count > 0 it also gates pin count (count != S.pinCount → deprioritize).
 
+**Stamp channel (extension over the original spec).** The corrected card view
+is also run through Vision text recognition (`BowStampReader`). Normalized OCR
+strings (uppercase alphanumerics) are matched against each system's id and its
+`stamps` aliases in `keysystems.json` (`BowStamp.match`). A stamped hit outranks
+all geometry scoring — factory engraving is stronger evidence than a fit
+residual — and the ranked top-3 are shown as chips carrying their evidence
+(`stamped "KW1" on the bow` / `spacing ~0.151 in · 5 cuts`). Like every other
+suggestion this stays advisory: the user confirms via the chip or the system
+menu.
+
 ## Validation protocol (Python prototype + Swift unit tests)
 
 Synthetic ground truth (programmatic, no camera):

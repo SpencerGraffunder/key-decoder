@@ -2,6 +2,40 @@ import XCTest
 @testable import KeyCore
 
 final class KeySystemTests: XCTestCase {
+    func testBowStampMatcher() throws {
+        let systems = KeySystemLibrary.bundled
+        XCTAssertEqual(BowStamp.match(texts: ["KWKSET"], in: systems)?.system.id, "kw1")
+        XCTAssertEqual(BowStamp.match(texts: [" KW-1 "], in: systems)?.system.id, "kw1",
+                       "punctuation and case must be normalized away")
+        XCTAssertEqual(BowStamp.match(texts: ["SCHLAGE"], in: systems)?.system.id, "sc1")
+        XCTAssertNil(BowStamp.match(texts: ["sc", "1"], in: systems),
+                     "fragments must not match")
+        // Tie-break goes to the earlier candidate; one distinct text = one hit.
+        let tie = BowStamp.match(texts: ["KW1", "SCHLAGE"], in: systems)
+        XCTAssertEqual(tie?.system.id, "kw1")
+        XCTAssertEqual(tie?.hits, 1)
+        XCTAssertNil(BowStamp.match(texts: ["nothing here"], in: systems))
+    }
+
+    func testApplyStampPromotesMatchedSystem() throws {
+        let systems = KeySystemLibrary.bundled
+        guard let kw1 = KeySystemLibrary.system(id: "kw1", in: systems),
+              let sc1 = KeySystemLibrary.system(id: "sc1", in: systems) else {
+            return XCTFail("bundled systems missing")
+        }
+        let base = [
+            SystemSuggestion(system: sc1, score: 0.01, detectedSpacingIn: 0.156, detectedCutCount: 6),
+            SystemSuggestion(system: kw1, score: 0.02, detectedSpacingIn: 0.156, detectedCutCount: 6),
+        ]
+        let out = SystemSuggester.applyStamp(texts: ["KW1"], candidates: systems, to: base)
+        XCTAssertEqual(out.first?.system.id, "kw1", "stamped system must lead regardless of fit")
+        XCTAssertTrue(out.first?.reason?.contains("stamped") ?? false)
+        XCTAssertEqual(out.count, 2)
+        XCTAssertEqual(out.last?.system.id, "sc1")
+        XCTAssertEqual(SystemSuggester.applyStamp(texts: ["nothing here"], candidates: systems, to: base),
+                       base, "no match must leave suggestions untouched")
+    }
+
     func testBundledDefinitionsLoad() throws {
         let systems = KeySystemLibrary.bundled
         XCTAssertFalse(systems.isEmpty, "keysystems.json must ship in the KeyCore bundle")

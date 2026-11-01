@@ -46,8 +46,9 @@ struct CardQuadEditorView: View {
 
                     ForEach(quad.indices, id: \.self) { i in
                         Circle()
-                            .fill(.white)
-                            .overlay(Circle().stroke(Color.accentColor, lineWidth: 3))
+                            .fill(.white.opacity(0.12))
+                            .overlay(Circle().stroke(Color.accentColor, lineWidth: 2.5))
+                            .overlay(Circle().fill(Color.accentColor).frame(width: 4, height: 4))
                             .frame(width: 30, height: 30)
                             .shadow(radius: 2)
                             .position(fit.toView(quad[i]))

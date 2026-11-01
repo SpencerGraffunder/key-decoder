@@ -102,3 +102,23 @@ public enum CardDetector {
     }
 }
 #endif
+
+#if canImport(Vision)
+import Vision
+
+/// Reads engraved/stamped bow text (brand + code) from the corrected card
+/// view. Advisory only — feeds SystemSuggester.applyStamp, never final.
+public enum BowStampReader {
+    /// Blocking call — run on a background queue. Returns raw OCR strings.
+    public static func readText(in image: CGImage) -> [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0.008
+        request.recognitionLanguages = ["en-US"]
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do { try handler.perform([request]) } catch { return [] }
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+}
+#endif

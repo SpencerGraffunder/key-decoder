@@ -7,6 +7,20 @@ public struct SystemSuggestion: Equatable {
     public let score: Double
     public let detectedSpacingIn: Double?
     public let detectedCutCount: Int
+    /// Why this ranks where it does ("stamped 'KW1' on bow", "spacing .151 ·
+    /// 5 cuts"). Optional var so existing call sites keep compiling.
+    public var reason: String? = nil
+
+    public init(
+        system: KeySystemDefinition, score: Double,
+        detectedSpacingIn: Double?, detectedCutCount: Int, reason: String? = nil
+    ) {
+        self.system = system
+        self.score = score
+        self.detectedSpacingIn = detectedSpacingIn
+        self.detectedCutCount = detectedCutCount
+        self.reason = reason
+    }
 }
 
 public enum SystemSuggester {
@@ -72,11 +86,48 @@ public enum SystemSuggester {
             if detectedCutCount > 0, detectedCutCount != candidate.pinCount {
                 score += 0.4
             }
+            var why: [String] = []
+            if let spacing = detectedSpacingIn {
+                why.append(String(format: "spacing ~%.3f in", spacing))
+            }
+            if detectedCutCount > 0 {
+                why.append("\(detectedCutCount) cut\(detectedCutCount == 1 ? "" : "s")")
+            }
             scored.append(SystemSuggestion(
                 system: candidate, score: score,
-                detectedSpacingIn: detectedSpacingIn, detectedCutCount: detectedCutCount
+                detectedSpacingIn: detectedSpacingIn, detectedCutCount: detectedCutCount,
+                reason: why.isEmpty ? nil : why.joined(separator: " · ")
             ))
         }
         return scored.sorted { $0.score < $1.score }
+    }
+
+    /// Stamped brand text is the strongest identification signal there is —
+    /// blanks are engraved at the factory. When OCR finds a system's stamp,
+    /// that system leads the ranking (still advisory: the user confirms).
+    public static func applyStamp(
+        texts: [String],
+        candidates: [KeySystemDefinition],
+        to suggestions: [SystemSuggestion]
+    ) -> [SystemSuggestion] {
+        guard let match = BowStamp.match(texts: texts, in: candidates) else { return suggestions }
+        var updated = suggestions
+        if let i = updated.firstIndex(where: { $0.system.id == match.system.id }) {
+            updated[i].reason = "stamped \u{201c}\(match.text)\u{201d} on the bow"
+            let item = updated.remove(at: i)
+            updated.insert(item, at: 0)
+        } else {
+            let entry = SystemSuggestion(
+                system: match.system, score: 0,
+                detectedSpacingIn: suggestions.first?.detectedSpacingIn,
+                detectedCutCount: suggestions.first?.detectedCutCount ?? 0,
+                reason: "stamped \u{201c}\(match.text)\u{201d} on the bow"
+            )
+            updated.insert(entry, at: 0)
+        }
+        // The stamped system leads regardless of fit score; the remainder
+        // keeps score order.
+        let head = updated.removeFirst()
+        return [head] + updated.sorted { $0.score < $1.score }
     }
 }
