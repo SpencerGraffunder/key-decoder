@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// 3x3 projective transform, row-major (`m[0..8]`), homogeneous coordinates.
@@ -53,8 +55,8 @@ public struct Homography3: Equatable {
         guard abs(det) > 1e-12 else { return nil }
         let inv = [
             (a[4] * a[8] - a[5] * a[7]) / det,
-            (a[1] * a[8] - a[2] * a[7]) / det,
-            (a[2] * a[5] - a[1] * a[4]) / det,
+            (a[2] * a[7] - a[1] * a[8]) / det,
+            (a[1] * a[5] - a[2] * a[4]) / det,
             (a[5] * a[6] - a[3] * a[8]) / det,
             (a[0] * a[8] - a[2] * a[6]) / det,
             (a[2] * a[3] - a[0] * a[5]) / det,
@@ -74,11 +76,11 @@ public struct Homography3: Equatable {
 
         let srcT = Self.normalizingTransform(for: src)
         let dstT = Self.normalizingTransform(for: dst)
-        guard let srcTInv = srcT?.inverted(), let dstT = dstT else { return nil }
+        guard let srcT = srcT, let dstT = dstT else { return nil }
 
         var ns = [CGPoint](), nd = [CGPoint]()
         for i in 0..<4 {
-            ns.append(srcT!.apply(src[i]))
+            ns.append(srcT.apply(src[i]))
             nd.append(dstT.apply(dst[i]))
         }
 
@@ -95,7 +97,7 @@ public struct Homography3: Equatable {
         guard let h = Self.solveLinearSystem(a: a, b: b) else { return nil }
         let hn = Homography3(m: [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1.0])
         guard let dstInv = dstT.inverted() else { return nil }
-        return dstInv * hn * srcTInv
+        return dstInv * hn * srcT
     }
 
     /// Similarity transform into the unit square for a point set (translation + scale).

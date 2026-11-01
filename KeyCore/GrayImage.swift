@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Grayscale UInt8 image — the currency of the CV pipeline.
@@ -15,6 +17,7 @@ public struct GrayImage {
     }
 
     /// Rasterize a CGImage (assumed already orientation-normalized) to luma.
+    #if canImport(CoreGraphics)
     public init?(cgImage: CGImage) {
         let w = cgImage.width, h = cgImage.height
         guard w > 0, h > 0 else { return nil }
@@ -34,12 +37,14 @@ public struct GrayImage {
         }
         self.init(width: w, height: h, pixels: gray)
     }
+    #endif
 
     @inline(__always)
     public func pixel(_ x: Int, _ y: Int) -> UInt8 {
         pixels[y * width + x]
     }
 
+    #if canImport(CoreGraphics)
     public func toCGImage() -> CGImage? {
         var mutable = pixels
         guard let ctx = CGContext(
@@ -50,6 +55,7 @@ public struct GrayImage {
         ) else { return nil }
         return ctx.makeImage()
     }
+    #endif
 
     /// Downscale by integer-free area sampling — used before expensive per-pixel steps.
     public func downscaled(factor: Double) -> GrayImage? {
@@ -86,6 +92,7 @@ public struct RGBAImage {
     public let height: Int
     public var bytes: [UInt8]
 
+    #if canImport(CoreGraphics)
     public init?(cgImage: CGImage) {
         let w = cgImage.width, h = cgImage.height
         guard w > 0, h > 0, let ctx = CGContext(
@@ -116,4 +123,5 @@ public struct RGBAImage {
         ) else { return nil }
         return ctx.makeImage()
     }
+    #endif
 }

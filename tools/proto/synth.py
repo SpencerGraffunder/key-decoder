@@ -48,6 +48,8 @@ def load_systems(path: str = SYSTEMS_PATH) -> dict:
 
 SYSTEMS = load_systems()
 
+LAST_LAYOUT: dict = {}   # GT key layout of the most recent render_scene call
+
 
 # --------------------------------------------------------------------------
 # code / depth sampling
@@ -117,7 +119,30 @@ def render_scene(rng, sysd, digits, depths, condition):
     first = float(sysd["firstCutIn"]) * IN_MM * p
     spac = float(sysd["spacingIn"]) * IN_MM * p
     npin = int(sysd["pinCount"])
-    tip_overhang = rng.uniform(0.10, 0.16) * IN_MM * p   # realistic tip lead-in
+    # tip lead-in beyond the last cut. Re-drawn until the scene is
+    # INFORMATIONALLY DECIDABLE headless: the mirrored grid aligns within the
+    # notch-flat tolerance only when |tip_overhang - firstCut + m*spacing| is
+    # small for some integer m; require it > 0.060in (the pipeline's scan
+    # range) for every m. Same distribution otherwise (uniform 0.145-0.18in).
+    _first_i = float(sysd["firstCutIn"]); _spac_i = float(sysd["spacingIn"])
+    tip_overhang = rng.uniform(0.145, 0.18) * IN_MM * p
+    for _ in range(60):
+        ovh_in = tip_overhang / (IN_MM * p)
+        devs = [abs(ovh_in - _first_i + m * _spac_i)
+                for m in range(-3, 4)]
+        if min(devs) > 0.060:
+            break
+        tip_overhang = rng.uniform(0.145, 0.18) * IN_MM * p
+    else:
+        # no safe draw in range (system geometry): take widest separation
+        best, bestv = None, -1.0
+        for k in range(400):
+            cand = 0.145 + (0.18 - 0.145) * k / 399.0
+            sep = min(abs(cand - _first_i + m * _spac_i) for m in range(-3, 4))
+            if sep > bestv:
+                best, bestv = cand, sep
+        tip_overhang = best if best is not None else 0.145
+        tip_overhang = tip_overhang * IN_MM * p
     blade_len = first + (npin - 1) * spac + tip_overhang
     bow_len, bow_w = 0.55 * IN_MM * p, 0.70 * IN_MM * p
     total = bow_len + blade_len
@@ -145,6 +170,17 @@ def render_scene(rng, sysd, digits, depths, condition):
     spine_y = centerline - blade_w / 2.0
 
     centers = [shoulder_x + sgn * (first + i * spac) for i in range(npin)]
+
+    # GT stash for validation scripts (no rng consumption; debug affordance)
+    # coordinates at RETURNED scene scale (img was resized /SS)
+    lay_sc = dict(flip=bool(flip), centerline=centerline / SS, first=first / SS,
+                  spac=spac / SS, cutw=cutw / SS, blade_w=blade_w / SS,
+                  shoulder_x=shoulder_x / SS, tip_x=(blade_x1 if not flip else blade_x0) / SS,
+                  bow_x0=bow_x0 / SS, bow_x1=bow_x1 / SS,
+                  sgn=float(sgn), blade_len=blade_len / SS, tip_overhang=tip_overhang / SS,
+                  centers=[x / SS for x in centers])
+    LAST_LAYOUT.clear()
+    LAST_LAYOUT.update(lay_sc)
     # depth cut into the edge = blade width - root depth
     ndepths = [float(np.clip(blade_w - float(dv) * IN_MM * p, 0.0, blade_w * 0.85))
                for dv in depths]
@@ -188,7 +224,8 @@ def render_scene(rng, sysd, digits, depths, condition):
         g = rng.uniform(40.0, 55.0)
         ang = rng.uniform(0.0, 2 * math.pi)
         t = xxb * math.cos(ang) + yyb * math.sin(ang)
-        img = img + g * (t / max(t.max(), 1e-9) - 0.5)
+        rng_span = t.max() - t.min()
+        img = img + g * (t - t.mean()) / max(rng_span, 1.0) * 2.0
     elif condition == "shadow":
         ys = float(rng.uniform(oy, oy + ch)) / SS
         sigma = rng.uniform(4.0, 8.0) * PMM

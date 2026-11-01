@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Straight-line fit of the blade spine in (u, v) space of a BladeAnalysis frame.
@@ -153,7 +155,21 @@ public enum BladeAnalyzer {
             return b - t
         }
         let widths = (0..<rawBins).compactMap(widthAt)
-        guard let wMedian = Statistics.median(widths), wMedian > 1 else { return nil }
+        // Blade width proxy = 25th percentile, NOT median: with a big bow the
+        // over-wide head columns can exceed 50% of the blob (head 1.05in vs
+        // blade 1.63in is common), which poisons a plain median. The head only
+        // ever shifts the upper tail, so a low percentile stays on the blade;
+        // cut columns sit just below the floor cluster and barely move p25.
+        let sortedWidths = widths.sorted()
+        guard sortedWidths.count > 10,
+              let wMedian = Optional(sortedWidths[sortedWidths.count / 4]), wMedian > 1 else { return nil }
+        if getenv("KEYCORE_DEBUG") != nil {
+            FileHandle.standardError.write("DBG theta=\(String(format: "%.2f", theta * 180 / .pi))deg p25W=\(String(format: "%.1f", wMedian)) rawBins=\(rawBins)\n".data(using: .utf8)!)
+            var k = 0
+            var line = "DBG widths:"
+            while k < rawBins { line += " \(k):\(rawTop[k] != nil && rawBot[k] != nil ? String(format: "%.0f", (rawBot[k]! - rawTop[k]!)) : "x")"; k += 100 }
+            FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+        }
         let minCount = max(2, Int((0.05 * wMedian).rounded()))
         let valid = (0..<rawBins).map { rawCount[$0] >= minCount && widthAt($0) != nil }
 
@@ -165,41 +181,60 @@ public enum BladeAnalyzer {
         // Trim fringe.
         let trimmed = last - first + 1
 
-        // Head detection on the trimmed span (before any flip): contiguous run of
-        // over-wide bins at each end, tolerating a single gap bin at the head edge.
-        func headRun(startLow: Bool) -> Int {
-            let threshold = 1.9 * wMedian
-            var run = 0
-            var gaps = 0
+        // Head detection per the validated prototype (tools/proto/REPORT.md
+        // "head region"): a contiguous run of w > 1.9·Wb columns anchored at the
+        // blob end; a narrow rounded cap of ≤0.30in with w ≥ 1.6·Wb at the outer
+        // end is skipped before the run starts; the run re-joins across dips
+        // ≤3px wide whose columns stay ≥1.6·Wb.
+        let ppi = m.pixelsPerMm * 25.4
+        let overThresh = 1.9 * wMedian
+        let capThresh = 1.6 * wMedian
+        let capMaxPx = Int((0.30 * ppi).rounded())
+        let dipRejoinPx = 3
+        let invalidGapPx = 2
+
+        /// Head-run length measured from the outer end of one side.
+        func headLen(startLow: Bool) -> Double {
+            var overSeen = false, dip = 0, gaps = 0, lastOver = -1, walked = 0
             var i = startLow ? 0 : trimmed - 1
+            let step = startLow ? 1 : -1
             while i >= 0, i < trimmed {
                 let gi = first + i
-                if valid[gi], let wv = widthAt(gi), wv > threshold {
-                    run += 1
+                if valid[gi], let wv = widthAt(gi) {
                     gaps = 0
-                } else if !valid[gi] {
-                    gaps += 1
-                    if gaps > 1 { break }
+                    if wv > overThresh {
+                        overSeen = true; dip = 0; lastOver = walked
+                    } else if !overSeen {
+                        // Rounded/tapered cap zone: any width tolerated for
+                        // ≤0.30in before the over-wide run must begin.
+                        if walked > capMaxPx { break }
+                    } else if wv >= capThresh {
+                        dip += 1
+                        if dip > dipRejoinPx { break }
+                    } else {
+                        break
+                    }
                 } else {
-                    break
+                    gaps += 1
+                    if gaps > invalidGapPx { break }
                 }
-                i += startLow ? 1 : -1
+                i += step
+                walked += 1
             }
-            return run
+            return overSeen ? Double(lastOver + 1) : 0
         }
-        let headLow = headRun(startLow: true)
-        let headHigh = headRun(startLow: false)
-        let minHeadPx = 4
+        let minRunPx = 0.10 * ppi
+        let lowLen = headLen(startLow: true)
+        let highLen = headLen(startLow: false)
         let flip: Bool
         var headPresent = false
-        if headHigh >= minHeadPx && headHigh >= headLow {
-            flip = true
-            headPresent = true
-        } else if headLow >= minHeadPx {
-            flip = false
-            headPresent = true
+        let headSideLow: Bool
+        if highLen >= minRunPx && highLen >= lowLen {
+            flip = true; headPresent = true; headSideLow = false
+        } else if lowLen >= minRunPx {
+            flip = false; headPresent = true; headSideLow = true
         } else {
-            flip = false
+            flip = false; headSideLow = true
         }
 
         // Final column arrays, flipped +u→bow at low u when required.
@@ -225,13 +260,15 @@ public enum BladeAnalyzer {
         }
         let finalValid = (0..<trimmed).map { counts[$0] >= minCount && width($0) != nil }
 
+        // The flat-shoulder face sits at the run end: the first normal-width
+        // column after the last over-wide bin is the shoulder. Sub-bin error is
+        // absorbed by the offset auto-align scan (±0.060in).
         let shoulderIdx: Int
         let headLenPx: Double
         if headPresent {
-            let headBins = flip ? headHigh : headLow
-            let s = min(headBins, trimmed - 2)
-            shoulderIdx = s
-            headLenPx = Double(s)
+            let runBins = headSideLow ? lowLen : highLen
+            shoulderIdx = min(max(Int(runBins.rounded()), 0), trimmed - 2)
+            headLenPx = Double(shoulderIdx)
         } else {
             shoulderIdx = 0
             headLenPx = 0

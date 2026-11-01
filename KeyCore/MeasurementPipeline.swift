@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Persistable pipeline state: enough to redraw the review overlay and remeasure
@@ -36,6 +38,7 @@ public enum MeasurementPipeline {
     }
 
     /// Full photo + card quad → corrected gray/color views.
+    #if canImport(CoreGraphics)
     public static func correct(
         photo: CGImage, quad: [CGPoint], outputWidth: Int = Perspective.defaultOutputWidth
     ) -> (gray: GrayImage, color: RGBAImage, pixelsPerMm: Double)? {
@@ -48,6 +51,7 @@ public enum MeasurementPipeline {
         else { return nil }
         return (gray.image, color, ppm)
     }
+    #endif
 
     /// Corrected view → key mask + blade geometry. nil → manual review path.
     public static func analyzeScene(corrected: GrayImage, pixelsPerMm: Double) -> Scene? {

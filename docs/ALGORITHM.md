@@ -52,8 +52,15 @@ From the key mask CC:
    v_top(u) = min v, v_bot(u) = max v, width w(u) = v_bot − v_top.
    Trim u range to where column pixel count >= 5% of the median blade width in
    px (kills fringe).
-4. Blade width W_b = median of w over all bins. Head/bow region: contiguous
-   end region where w > 1.9 × W_b. The blade band = complement.
+4. Blade width W_b = 25th percentile of w over all bins (a plain median breaks
+   when the bow covers > 50% of the blob, which a 1.05" bow vs 1.63" blade
+   routinely does; the bow only shifts the upper tail, so p25 stays on the
+   blade). Head/bow region: run of bins with w > 1.9 × W_b anchored at a blob
+   end, validated against prototype (tools/proto/REPORT.md): a rounded/tapered
+   cap of any width ≤ 0.30" at the outer end is skipped before the run starts;
+   the run re-joins across dips ≤ 3 px whose columns stay ≥ 1.6 × W_b; the
+   head counts as PRESENT only if the run spans ≥ 0.10". The blade band =
+   complement.
    - Head present on one end → that end is BOW side (u small after sign flip).
    - No head (plastic blends into the card): both ends are blade ends; resolve
      direction later (3f).
@@ -76,7 +83,11 @@ shoulder). For alignment = tip: u_i measured back from u_t.
 
 Offset auto-align (removes shoulder-position error, up to ±0.060"): scan δ in
 [−0.060", +0.060"] step 0.004"; depth_at(u) is defined in the next paragraph;
-pick δ maximizing Σ_i depth(u_i + δ). (Cuts are deepest at their centers.)
+pick δ minimizing RMS_i |depth(u_i + δ) − nearest table depth| + 0.03·|δ| per
+inch. (Prototype deviation, see REPORT.md: maximizing Σ depth parks the windows
+on the blade floor between cuts, and Σ is flat across the notch root band so
+sub-pixel noise decides the argmin; the |δ| regularizer breaks remaining ties
+toward the centered alignment and stabilizes the headless direction choice.)
 
 Depth per cut: window half-width h = min(0.012", 0.25*spacing) in px (the window
 must stay on the cut's flat root bottom; a wider window averages the ramp flanks
@@ -96,7 +107,12 @@ Confidence per cut:
 
 Direction (headless case) is picked jointly with the offset scan: evaluate the
 grid fit in both axis directions, pick the direction with lower total |depth −
-nearest table depth| RMS, then the offset scan within it.
+nearest table depth| RMS, then the offset scan within it. Mirrored grids can
+read the same depth multiset in reverse (provably ambiguous), so add
+0.05·max(0, |δ| − 0.030") to the cross-direction comparison (the offset scan
+itself only aligns within ±0.060"). If a real headless key is still ambiguous
+(tip overhang ≈ firstCut ± m·spacing within 0.060"), the honest behavior is to
+flag the code for user review, not silently pick.
 
 ### 5. Depth → digit
 Digit = argmin over the system's depth table. Never round outside the table

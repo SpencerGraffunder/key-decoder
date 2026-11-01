@@ -1,4 +1,7 @@
+#if canImport(Vision)
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 import Vision
 
@@ -56,3 +59,4 @@ public enum CardDetector {
         return QuadOrdering.order(pts)
     }
 }
+#endif

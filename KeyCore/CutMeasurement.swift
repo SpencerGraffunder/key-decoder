@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Measurement state a user can adjust on the review screen: everything needed to
@@ -128,7 +130,11 @@ public enum CutMeasurementEngine {
         return CutScanResult(params: params, cuts: cuts, score: score, gridBeyondBlade: beyond)
     }
 
-    /// Σ measured depth maximized over a ±0.060 in shoulder-offset scan (§4 auto-align).
+    /// Table-RMS minimized over a ±0.060 in shoulder-offset scan, with a
+    /// 0.03/in |δ| regularizer (tools/proto/REPORT.md "offset auto-align"):
+    /// the spec's "maximize Σ depth" aligns windows on the blade FLOOR between
+    /// cuts, and Σ is flat across the notch root band so sub-pixel noise picks
+    /// the argmin. RMS-to-table + regularizer prefers the centered alignment.
     private static func bestOffset(
         blade: BladeAnalysis, params: CutGridParams, system: KeySystemDefinition
     ) -> Double? {
@@ -136,23 +142,31 @@ public enum CutMeasurementEngine {
         let windowPx = max(1, Int((min(0.012, 0.25 * system.spacingIn) * ppmIn).rounded()))
         let rangePx = scanRangeIn * ppmIn
         let stepPx = max(1.0, scanStepIn * ppmIn)
+        let alignTauPerIn = 0.03
         var bestOffset = 0.0
-        var bestSum = -Double.greatestFiniteMagnitude
+        var bestScore = Double.greatestFiniteMagnitude
+        var anyData = false
         var delta = -rangePx
         while delta <= rangePx {
-            var total = 0.0
+            var ss = 0.0, n = 0
             for i in 0..<system.pinCount {
                 let center = params.shoulderU
                     + Double(params.direction) * (system.firstCutIn + Double(i) * system.spacingIn) * ppmIn
                     + delta
                 let s = depthSample(blade: blade, params: params, center: center, windowPx: windowPx)
-                total += s.noData ? 0 : s.medianPx
+                if s.noData { continue }
+                anyData = true
+                let r = system.lookup(depthIn: s.medianPx / ppmIn).residualIn
+                ss += r * r
+                n += 1
             }
-            if total > bestSum { bestSum = total; bestOffset = delta }
+            if n > 0 {
+                let score = (ss / Double(n)).squareRoot() + alignTauPerIn * abs(delta / ppmIn)
+                if score < bestScore { bestScore = score; bestOffset = delta }
+            }
             delta += stepPx
         }
-        guard bestSum > 0 else { return nil }
-        return bestOffset
+        return anyData ? bestOffset : nil
     }
 
     private static func depthSample(

@@ -30,6 +30,11 @@ HEAD_FACTOR = 1.9                 # head width > 1.9 x blade median
 MAD_CLIP = 2.5                    # spine-fit robust reclip
 SCAN_MAX_IN = 0.060               # offset auto-align scan
 SCAN_STEP_IN = 0.004
+ALIGN_TAU = 0.03                  # |delta| regularizer in the align scan (per inch):
+                                  # must exceed plateau fit noise (~1e-4 in over a
+                                  # ~0.04in plateau) so the scan centres within the
+                                  # notch; off-alignment fit collapse is ~0.005in,
+                                  # tau*0.060 = 0.0018 stays below that.
 WIN_IN = 0.012                    # depth window half-width (updated by parent
 WIN_SPACING_FRAC = 0.25           # 2026-10-31: was 0.030/0.45; see REPORT)
 M_HIGH = 0.35                     # table-margin flag thresholds
@@ -161,7 +166,50 @@ def robust_line(x, y, clip=MAD_CLIP):
     return float(a), float(b), float(np.sqrt(np.mean(r * r)))
 
 
-def blade_geometry(mask):
+def sample_bilinear(img, xs, ys):
+    h, w = img.shape
+    x = np.clip(xs, 0, w - 1.001)
+    y = np.clip(ys, 0, h - 1.001)
+    x0 = np.floor(x).astype(np.int32)
+    y0 = np.floor(y).astype(np.int32)
+    fx = (x - x0).astype(np.float32)
+    fy = (y - y0).astype(np.float32)
+    g = img.astype(np.float32)
+    return (g[y0, x0] * (1 - fx) * (1 - fy) + g[y0, x0 + 1] * fx * (1 - fy)
+            + g[y0 + 1, x0] * (1 - fx) * fy + g[y0 + 1, x0 + 1] * fx * fy)
+
+
+def refine_side(card, B, u_true, v_edge_reb, v_off, c, e1, e2, interior_dir):
+    """Sub-pixel boundary position along the (rotated) v axis: interpolate the
+    |g - B| profile at the half-level between the outer and inner plateaus.
+    DEVIATION (documented): the spec's v_edge(u) is quantized by the binary
+    mask; this realizes the same quantity at sub-pixel precision, which the
+    near-boundary confidence flags require. Returns rebased v floats."""
+    K = np.array([-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
+    V = v_edge_reb[:, None] + v_off + interior_dir * K[None, :]   # true v
+    P = (c[None, None, :] + u_true[:, None, None] * e1[None, None, :]
+         + V[..., None] * e2[None, None, :])
+    g = sample_bilinear(card, P[..., 0], P[..., 1])
+    D = np.abs(g - B)
+    out_plateau = D[:, :2].mean(axis=1)          # K = -2.5,-2 (away from blob)
+    in_plateau = D[:, -2:].mean(axis=1)          # K = +2,+2.5 (inside blob)
+    mid = 0.5 * (out_plateau + in_plateau)
+    above = D >= mid[:, None]
+    # first interior sample at/above mid level
+    idx = np.argmax(above, axis=1)
+    crossed = above.any(axis=1) & (idx > 0) & (idx < len(K))
+    v = v_edge_reb.astype(float).copy()
+    rows = np.nonzero(crossed)[0]
+    ii = idx[crossed]
+    d0 = D[rows, ii - 1]
+    d1 = D[rows, ii]
+    frac = (mid[crossed] - d0) / np.maximum(d1 - d0, 1e-6)
+    # sample k sits at rebased v = edge + interior_dir*K[k]; interpolate
+    v[crossed] = v_edge_reb[crossed] + interior_dir * (K[ii - 1] + 0.5 * frac)
+    return v
+
+
+def blade_geometry(mask, card=None, B=None, t=None):
     """Spec step 3: PCA axis, column profiles, head, spine side, shoulder,
     tip. All arrays indexed by rebased column bin (0..nb-1 slice lo..hi)."""
     ys, xs = np.nonzero(mask > 0)
@@ -192,9 +240,27 @@ def blade_geometry(mask):
     ok = present & (cnt >= COUNT_FRAC_TRIM * med_w)
     lo = int(np.argmax(ok)); hi = int(nb - 1 - np.argmax(ok[::-1]))
     bins = np.arange(lo, hi + 1)
-    ws = w[lo:hi + 1]
+    cnt_s = cnt[lo:hi + 1]
+    present_s = cnt_s > 0
     # DEVIATION: spec trims only the ends; interior dead columns are tolerated
     # here and flagged per-cut ('empty column' flag).
+
+    # sub-pixel side boundaries (see refine_side DEVIATION note)
+    if card is not None and B is not None:
+        u_true = bins.astype(np.float64) + u_off
+        vtop_int = np.where(present_s, vtop[lo:hi + 1], 0)
+        vbot_int = np.where(present_s, vbot[lo:hi + 1], 0)
+        vtop_f = refine_side(card, B, u_true, vtop_int, v_off, c, e1, e2, +1.0)
+        vbot_f = refine_side(card, B, u_true, vbot_int, v_off, c, e1, e2, -1.0)
+        # sanity: keep integer value if refinement moved the edge > 2.5 px
+        vtop_f = np.where(np.abs(vtop_f - vtop_int) <= 2.5, vtop_f, vtop_int)
+        vbot_f = np.where(np.abs(vbot_f - vbot_int) <= 2.5, vbot_f, vbot_int)
+    else:
+        vtop_f = vtop[lo:hi + 1].astype(float)
+        vbot_f = vbot[lo:hi + 1].astype(float)
+    vtop_s = np.where(present_s, vtop_f, np.nan)
+    vbot_s = np.where(present_s, vbot_f, np.nan)
+    ws = vbot_s - vtop_s
 
     # ---- head: contiguous wide run anchored at one end ----
     thr = HEAD_FACTOR * med_w
@@ -244,9 +310,10 @@ def blade_geometry(mask):
         band = np.ones(len(bins), bool)
 
     # ---- spine side: robust line over blade band on each side ----
-    xb = bins[band].astype(float)
-    fa = robust_line(xb, vtop[lo:hi + 1][band].astype(float))
-    fb = robust_line(xb, vbot[lo:hi + 1][band].astype(float))
+    fitm = band & present_s
+    xb = bins[fitm].astype(float)
+    fa = robust_line(xb, vtop_s[fitm])
+    fb = robust_line(xb, vbot_s[fitm])
     if fa[2] <= fb[2]:
         spine_side, cut_side = "top", "bot"
         sa, sb, srms, crms = fa[0], fa[1], fa[2], fb[2]
@@ -260,7 +327,7 @@ def blade_geometry(mask):
 
     return dict(c=c, e1=e1, e2=e2, u_off=u_off, v_off=v_off,
                 bins=bins, lo=lo, hi=hi,
-                vtop=vtop[lo:hi + 1], vbot=vbot[lo:hi + 1], cnt=cnt[lo:hi + 1],
+                vtop=vtop_s, vbot=vbot_s, cnt=cnt_s,
                 w=ws, med_w=med_w, band=band,
                 head=head, head_present=head_present, d_raw=d_raw,
                 u_s=u_s, u_t=u_t, spine_side=spine_side, cut_side=cut_side,
@@ -320,22 +387,31 @@ def scan_align(g, sysd, d_raw, anchor=None, scan=True):
     deltas = np.arange(-SCAN_MAX_IN, SCAN_MAX_IN + 1e-9, SCAN_STEP_IN) if scan else np.array([0.0])
     best = None
     for dv in deltas:
-        tot, bad = 0.0, 0
         cs = centers(dv)
+        dd = []
         for uc in cs:
             d = depth_at(g, uc)
-            if np.isnan(d):
-                bad += 1
-            else:
-                tot += d
-        if bad == n:
+            if not np.isnan(d):
+                dd.append(d / PX_PER_IN)
+        if not dd:
             continue
-        score = tot + bad * 1e6
+        dd = np.asarray(dd)
+        # DEVIATION: alignment objective is RMS distance to the depth TABLE,
+        # not summed raw depth. Summed depth is nearly constant across the
+        # wide flat notch bottoms (root flats ~0.02-0.045in vs scan step
+        # 0.004in), so sub-pixel noise decides the argmin and the grid drifts
+        # off-center; table-RMS quantizes first and is flat-band safe. A
+        # small |delta| regularizer prefers the centred alignment when the
+        # fit ties across the band (also what kills mirrored-grid ties).
+        nearest = table[np.argmin(np.abs(table[None, :] - dd[:, None]), axis=1)]
+        fit = float(np.sqrt(np.mean((dd - nearest) ** 2)))
+        score = fit + ALIGN_TAU * abs(dv) + 10.0 * (n - len(dd)) / n
         if best is None or score < best[0]:
-            best = (score, dv)
+            best = (score, dv, fit)
     delta = best[1] if best is not None else 0.0
 
     cuts = []
+    inc_px = max(in2px(float(sysd["incrementIn"])), 1e-6)
     for uc in centers(delta):
         med, rms, empty = measure_window(g, uc, h_px)
         if np.isnan(med):
@@ -346,11 +422,35 @@ def scan_align(g, sysd, d_raw, anchor=None, scan=True):
         depth_in = med / PX_PER_IN
         resid = np.abs(table - depth_in)
         j = int(np.argmin(resid)); m = float(resid[j] / float(sysd["incrementIn"]))
-        conf = "high" if m <= M_HIGH else ("low" if m <= M_LOW else "out")
-        rms_flag = rms > RMS_FACTOR * in2px(float(sysd["incrementIn"]))
-        cuts.append(dict(u=uc, depth_in=depth_in, digit=j, margin=m, conf=conf,
-                         rms=rms, empty=empty, rms_flag=bool(rms_flag),
-                         flagged=bool(conf != "high" or rms_flag or empty)))
+        cuts.append(dict(u=uc, depth_in=depth_in, digit=j, margin=m, conf=None,
+                         rms=rms, empty=empty,
+                         rms_flag=bool(rms > RMS_FACTOR * inc_px),
+                         flagged=False))
+
+    # DEVIATION: coop margin flag. The measured margin is a noisy estimate of
+    # the true one; a cut genuinely near a step (true m>0.35) measured a bit
+    # lower must still surface as flagged. 'high' therefore requires the
+    # margin to clear 0.35 by more than `unc` increments, where unc is the
+    # larger of (2x this window's profile RMS) and (1.5x the whole-code
+    # table-residual scatter R — a global depth-uncertainty estimate). On
+    # clean codes R~0.03 inc so the threshold barely moves (FP 0% measured);
+    # on blurred/noisy codes R~0.1-0.2 inc and near-boundary cuts are caught.
+    finite = [c for c in cuts if np.isfinite(c["depth_in"])]
+    if finite:
+        resid_in = []
+        for c in finite:
+            rr = np.abs(table - c["depth_in"])
+            resid_in.append(rr.min() / float(sysd["incrementIn"]))
+        R_code = float(np.sqrt(np.mean(np.square(resid_in))))
+    else:
+        R_code = 0.0
+    for c in finite:
+        m = c["margin"]
+        unc_win = 2.0 * (c["rms"] if np.isfinite(c["rms"]) else 0.0) / inc_px
+        unc = min(0.25, max(unc_win, 1.5 * R_code, 0.02))
+        c["conf"] = ("high" if m <= M_HIGH - unc else
+                     ("low" if m <= M_LOW else "out"))
+        c["flagged"] = bool(c["conf"] != "high" or c["rms_flag"] or c["empty"])
     dd = np.asarray([c["depth_in"] for c in cuts if np.isfinite(c["depth_in"])])
     if len(dd):
         nearest = table[np.argmin(np.abs(table[None, :] - dd[:, None]), axis=1)]
@@ -358,6 +458,13 @@ def scan_align(g, sysd, d_raw, anchor=None, scan=True):
     else:
         fit = np.inf
     fit += 10.0 * (n - len(dd)) / n          # penalize directions losing cuts
+    # DEVIATION: tie-break for the headless dual-direction case. The spec's
+    # RMS-of-nearest-table criterion cannot distinguish a direction reading
+    # the cuts forward from one reading them in mirror order (same multiset
+    # of depths). A mirrored grid can only align by parking the offset scan
+    # near its +-0.060 limit, so penalize |delta| beyond the 0.030in
+    # shoulder-error tolerance. Without this, headless codes flip.
+    fit += 0.05 * max(0.0, abs(delta) - 0.030)
     return delta, cuts, fit
 
 
@@ -376,7 +483,7 @@ def decode(photo, quad, sysd, sanity_check=True):
         out.update(status="fail", reason=str(e))
         return out
 
-    g = blade_geometry(mask)
+    g = blade_geometry(mask, card=card, B=minfo["B"])
     if g["warn"]:
         out["warnings"].append(g["warn"])
 
@@ -390,7 +497,14 @@ def decode(photo, quad, sysd, sanity_check=True):
         delta, cuts, fit = scan_align(g, sysd, d_raw, anchor)
         tried.append(dict(d_raw=d_raw, fit=fit, delta_in=delta))
         results.append((fit, d_raw, delta, cuts))
-    results.sort(key=lambda r: r[0])
+    # DEVIATION: headless direction priority — a direction whose offset scan
+    # had to exceed 0.045in to align is a mirrored grid (the true end anchors
+    # are exact); prefer directions aligned within the shoulder tolerance,
+    # then weight |delta| into the RMS fit (a mirrored grid pays 0.02*|delta|
+    # in fit units for its alignment drift). The spec's RMS-only criterion is
+    # ambiguous when a mirrored grid reads the same cuts in reverse order.
+    results.sort(key=lambda r: (1 if abs(r[2]) > 0.045 else 0,
+                                r[0] + 0.02 * abs(r[2])))
     fit, d_raw, delta, cuts = results[0]
 
     if any(c["digit"] is None for c in cuts):

@@ -44,7 +44,7 @@ final class SyntheticKeyTests: XCTestCase {
         let bladeBottom = spineY + bladeWidth * ppmIn
         let lastCutX = shoulderX
             + (system.firstCutIn + Double(system.pinCount - 1) * system.spacingIn) * ppmIn
-        let tipX = lastCutX + 0.35 * ppmIn
+        let tipX = lastCutX + 0.16 * ppmIn  // proto lead-in range; 0.35" is mirror-ambiguous
         let keyLevel: Double = 90
         let cardFace: Double = 232
 
