@@ -130,7 +130,7 @@ struct KeySystemDiagram: View {
             // copy instead, which is what GraphicsContext opacity is for.
             var faded = context
             faded.opacity *= 0.9
-            faded.fill(slot, with: .color(.background))
+            faded.fill(slot, with: .color(Color.background))
 
             let shoulderEnd = bowIn + shoulderIn
             let firstCut = shoulderEnd + 0.08
