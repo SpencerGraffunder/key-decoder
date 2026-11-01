@@ -201,7 +201,6 @@ public enum BladeAnalyzer {
         } else {
             flip = false
         }
-        _ = headLength
 
         // Final column arrays, flipped +u→bow at low u when required.
         var vTop = [Double?](repeating: nil, count: trimmed)

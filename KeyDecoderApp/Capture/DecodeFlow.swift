@@ -173,14 +173,12 @@ final class DecodeFlow {
 
     func dragCut(_ index: Int, toImagePoint point: CGPoint) {
         guard let blade = scene?.blade, var params, let result,
-              let system = currentSystem else { return }
-        let ppmIn = blade.pixelsPerInch
+              currentSystem != nil else { return }
         let existing = params.cutDeltaPx.indices.contains(index) ? params.cutDeltaPx[index] : 0
         let nominal = result.cuts[index].centerU - existing
         let newDelta = blade.uv(point).u - nominal
         while params.cutDeltaPx.count <= index { params.cutDeltaPx.append(0) }
         params.cutDeltaPx[index] = newDelta
-        _ = system
         self.params = params
         remeasureManual()
     }
