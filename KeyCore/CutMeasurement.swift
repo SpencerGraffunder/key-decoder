@@ -100,13 +100,14 @@ public enum CutMeasurementEngine {
             if center < blade.uMin || center > blade.uMax { beyond = true }
 
             let sample = depthSample(blade: blade, params: params, center: center, windowPx: windowPx)
-            let lookup = system.lookup(depthIn: sample.depthIn)
+            let depthIn = sample.medianPx / ppmIn
+            let lookup = system.lookup(depthIn: depthIn)
             let noiseRmsIn = sample.rmsPx / ppmIn
             let digitOverride = params.digitOverrides[i]
             let noiseHigh = noiseRmsIn > 0.25 * system.incrementIn
             cuts.append(CutMeasurement(
                 index: i, centerU: center,
-                depthIn: sample.depthIn,
+                depthIn: depthIn,
                 digit: digitOverride ?? lookup.digit,
                 residualIn: digitOverride != nil ? 0 : lookup.residualIn,
                 marginSteps: digitOverride != nil ? 0 : lookup.marginSteps,

@@ -33,7 +33,10 @@ public struct Homography3: Equatable {
         let x = Double(p.x), y = Double(p.y)
         let w = self[2, 0] * x + self[2, 1] * y + self[2, 2]
         guard abs(w) > 1e-12 else {
-            return CGPoint(x: .nan, y: .nan)
+            // Canonical quiet NaN. `.nan` is ambiguous here (CoreGraphics CGFloat
+            // vs. Darwin's C `nan` import), so build it from its bit pattern.
+            let nan = Double(bitPattern: 0x7FF8_0000_0000_0000)
+            return CGPoint(x: nan, y: nan)
         }
         let xx = (self[0, 0] * x + self[0, 1] * y + self[0, 2]) / w
         let yy = (self[1, 0] * x + self[1, 1] * y + self[1, 2]) / w
