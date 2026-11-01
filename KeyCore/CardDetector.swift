@@ -34,16 +34,19 @@ public enum CardDetector {
         rectangles.minimumConfidence = 0.35
 
         let contours = VNDetectContoursRequest()
-        contours.maximumObservations = 32
         contours.contrastAdjustment = 1.7
-        contours.minimumSize = 0.12
+        // Outermost contours plus one nesting level: captures the card edge
+        // and its near-edge inner boundary without drowning in chip/text
+        // contours (this request has no maximumObservations/minimumSize).
+        contours.maximumRecallLevel = 2
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do { try handler.perform([rectangles, contours]) } catch { return nil }
 
-        var observations: [VNRectangleObservation] = []
-        observations.append(contentsOf: rectangles.results ?? [])
-        observations.append(contentsOf: contours.results ?? [])
+        var observations: [VNRectangleObservation] = rectangles.results ?? []
+        // VNContourObservation is a VNRectangleObservation subclass whose
+        // corners are the contour's approximated bounding rectangle.
+        observations.append(contentsOf: (contours.results ?? []).map { $0 as VNRectangleObservation })
         let usable = observations.filter { $0.confidence >= 0.30 }
         guard !usable.isEmpty else { return nil }
 
