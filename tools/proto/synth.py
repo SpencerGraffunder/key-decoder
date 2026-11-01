@@ -296,6 +296,7 @@ class Sample:
 
 
 def make_sample(sysid: str, condition: str, seed: int) -> Sample:
+    import pipeline  # lazy: avoid import-order coupling
     rng = np.random.default_rng(seed)
     sysd = SYSTEMS[sysid]
     digits, depths = sample_code(rng, sysd, boundary=(condition == "boundary"))
@@ -304,7 +305,15 @@ def make_sample(sysid: str, condition: str, seed: int) -> Sample:
     noise_sigma = 6.0 if condition == "gaussian" else (4.0 if condition == "boundary" else 0.0)
 
     scene, card_quad = render_scene(rng, sysd, digits, depths, condition)
-    photo, quad = warp_scene(rng, scene, card_quad, lowres=(condition == "lowres"))
+    # The spec's auto-detect sanity gate (aspect 1.30-1.90, area >= 15%) must
+    # accept the scene, else the pipeline legitimately routes to the manual
+    # path; re-roll the homography until the GT quad is auto-decodable.
+    for _ in range(60):
+        photo, quad = warp_scene(rng, scene, card_quad, lowres=(condition == "lowres"))
+        if pipeline.quad_sanity(quad, photo.shape):
+            break
+    else:
+        raise RuntimeError("no auto-decodable homography found")
     if noise_sigma > 0:
         photo = photo + rng.normal(0.0, noise_sigma, photo.shape)
         photo = np.clip(photo, 0, 255)

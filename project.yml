@@ -27,6 +27,7 @@ targets:
         PRODUCT_NAME: KeyCore
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.core
         INFOPLIST_FILE: KeyCore/Support/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
         DEFINES_MODULE: "YES"
         CODE_SIGNING_ALLOWED: "NO"
 
@@ -43,6 +44,7 @@ targets:
         PRODUCT_MODULE_NAME: KeyDecoder
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.app
         INFOPLIST_FILE: KeyDecoderApp/Support/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: "NO"
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
