@@ -83,8 +83,9 @@ def sample_code(rng, sysd: dict, boundary: bool):
 # scene rendering (straight-on, supersampled)
 # --------------------------------------------------------------------------
 
-FLANK_SLOPE = 4.5  # dn/dd of the trapezoid flank (4.5 ~= 12.5 deg from
-                   # vertical; end mills cut near-vertical flanks)
+FLANK_SLOPE = 4.5  # depth drop per px of horizontal travel on the trapezoid
+                   # flank (4.5 ~= 12.5 deg from vertical; end mills cut
+                   # near-vertical flanks)
 
 
 def _trapezoid_notches(x_grid, centers, ndepths, cutw_px):
@@ -93,7 +94,7 @@ def _trapezoid_notches(x_grid, centers, ndepths, cutw_px):
     n = np.zeros_like(x_grid)
     for xc, nd in zip(centers, ndepths):
         d = np.abs(x_grid - xc)
-        prof = np.maximum(0.0, nd - np.maximum(0.0, d - cutw_px / 2.0) / FLANK_SLOPE)
+        prof = np.maximum(0.0, nd - FLANK_SLOPE * np.maximum(0.0, d - cutw_px / 2.0))
         n = np.maximum(n, prof)
     return n
 
