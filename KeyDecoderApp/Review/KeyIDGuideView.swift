@@ -128,9 +128,11 @@ struct KeySystemDiagram: View {
             // Color.opacity(_:) now resolves to the ShapeStyle overload here
             // (returns `some ShapeStyle`, not Color) — dim via the context
             // copy instead, which is what GraphicsContext opacity is for.
+            // UIColor-bridged color: the bare `background` name here hits
+            // View.background method overloads instead of a Color property.
             var faded = context
             faded.opacity *= 0.9
-            faded.fill(slot, with: .color(Color.background))
+            faded.fill(slot, with: .color(Color(uiColor: .systemBackground)))
 
             let shoulderEnd = bowIn + shoulderIn
             let firstCut = shoulderEnd + 0.08
