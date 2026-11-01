@@ -22,13 +22,11 @@ targets:
     platform: iOS
     sources:
       - path: KeyCore
-        excludes:
-          - "Support/Info.plist"
     settings:
       base:
         PRODUCT_NAME: KeyCore
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.core
-        INFOPLIST_FILE: KeyCore/Support/Info.plist
+        INFOPLIST_FILE: Support/KeyCore-Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
         DEFINES_MODULE: "YES"
         CODE_SIGNING_ALLOWED: "NO"
@@ -38,8 +36,6 @@ targets:
     platform: iOS
     sources:
       - path: KeyDecoderApp
-        excludes:
-          - "Support/Info.plist"
     dependencies:
       - target: KeyCore
     settings:
@@ -47,7 +43,7 @@ targets:
         PRODUCT_NAME: KeyDecoder
         PRODUCT_MODULE_NAME: KeyDecoder
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.app
-        INFOPLIST_FILE: KeyDecoderApp/Support/Info.plist
+        INFOPLIST_FILE: Support/App-Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: "NO"
         CODE_SIGNING_ALLOWED: "NO"
@@ -60,14 +56,12 @@ targets:
     platform: iOS
     sources:
       - path: Tests
-        excludes:
-          - "Support/Info.plist"
     dependencies:
       - target: KeyDecoderApp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.keydecoder.tests
-        INFOPLIST_FILE: Tests/Support/Info.plist
+        INFOPLIST_FILE: Support/Tests-Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
         # PRODUCT_NAME of the app target is "KeyDecoder", which XcodeGen cannot
         # infer from the target name "KeyDecoderApp" — pin the host explicitly.
