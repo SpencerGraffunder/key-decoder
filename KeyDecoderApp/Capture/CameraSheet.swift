@@ -150,11 +150,9 @@ final class CameraController: NSObject {
 
     func capture() {
         let settings = AVCapturePhotoSettings()
-        if let connection = photoOutput.connection(with: .video) {
-            connection.videoMirrored = false
-            if connection.isVideoRotationAngleSupported(90) {
-                connection.videoRotationAngle = 90
-            }
+        if let connection = photoOutput.connection(with: .video),
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
         }
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -219,7 +217,8 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return }
+        guard let raw = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return }
+        let base = raw.assumingMemoryBound(to: UInt8.self)
         let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
