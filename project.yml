@@ -22,6 +22,8 @@ targets:
     platform: iOS
     sources:
       - path: KeyCore
+        excludes:
+          - "Support/Info.plist"
     settings:
       base:
         PRODUCT_NAME: KeyCore
@@ -36,6 +38,8 @@ targets:
     platform: iOS
     sources:
       - path: KeyDecoderApp
+        excludes:
+          - "Support/Info.plist"
     dependencies:
       - target: KeyCore
     settings:
@@ -56,6 +60,8 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+        excludes:
+          - "Support/Info.plist"
     dependencies:
       - target: KeyDecoderApp
     settings:
