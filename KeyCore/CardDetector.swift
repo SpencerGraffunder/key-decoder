@@ -22,9 +22,10 @@ public enum CardDetector {
         return d.quad
     }
 
-    /// Two Vision detectors, two confidence tiers: rectangle + contour
-    /// observations are pooled, the strict gate tries first, then the relaxed
-    /// suggestion gate. A suggestion is never auto-applied.
+    /// Two Vision detectors, two confidence tiers: rectangle corners and
+    /// contour bounding quads are pooled as normalized quads, the strict gate
+    /// tries first, then the relaxed suggestion gate. A suggestion is never
+    /// auto-applied.
     public static func detect(in image: CGImage) -> CardDetection? {
         let rectangles = VNDetectRectanglesRequest()
         rectangles.maximumObservations = 16
@@ -33,58 +34,133 @@ public enum CardDetector {
         rectangles.quadratureTolerance = 25
         rectangles.minimumConfidence = 0.35
 
+        // Contour detector: rescues low-contrast upright cards the rectangle
+        // detector misses. Its request exposes no count/size/confidence knobs —
+        // filtering happens on the extracted bounding quads instead, and
+        // CardQuality gates are the real arbiter.
         let contours = VNDetectContoursRequest()
         contours.contrastAdjustment = 1.7
-        // Outermost contours plus one nesting level: captures the card edge
-        // and its near-edge inner boundary without drowning in chip/text
-        // contours (this request has no maximumObservations/minimumSize).
-        contours.maximumRecallLevel = 2
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do { try handler.perform([rectangles, contours]) } catch { return nil }
 
-        var observations: [VNRectangleObservation] = rectangles.results ?? []
-        // VNContourObservation is a VNRectangleObservation subclass whose
-        // corners are the contour's approximated bounding rectangle.
-        observations.append(contentsOf: (contours.results ?? []).map { $0 as VNRectangleObservation })
-        let usable = observations.filter { $0.confidence >= 0.30 }
-        guard !usable.isEmpty else { return nil }
+        // Normalized Vision corner quads (y-up, TL TR BR BL as reported).
+        var quads: [[CGPoint]] = []
+        for obs in rectangles.results ?? [] where obs.confidence >= 0.30 {
+            quads.append([obs.topLeft, obs.topRight, obs.bottomRight, obs.bottomLeft])
+        }
+        quads.append(contentsOf: contourQuads(from: contours.results ?? []))
+        guard !quads.isEmpty else { return nil }
 
-        if let quad = pickCard(from: usable, pixelWidth: image.width, pixelHeight: image.height) {
+        if let quad = pickCard(from: quads, pixelWidth: image.width, pixelHeight: image.height) {
             return CardDetection(quad: quad, confident: true)
         }
-        if let quad = pickSuggestable(from: usable, pixelWidth: image.width, pixelHeight: image.height) {
+        if let quad = pickSuggestable(from: quads, pixelWidth: image.width, pixelHeight: image.height) {
             return CardDetection(quad: quad, confident: false)
         }
         return nil
     }
 
-    /// Pure selection logic (testable without Vision): score rectangle observations as cards.
+    /// Axis-aligned bounding quad per contour subpath of the observation's
+    /// normalized path (CGPath API — stable since iOS 11, unlike the
+    /// per-contour-index accessors). A contour's bbox is only a faithful card
+    /// quad for near-upright captures; rotated cards keep coming from the
+    /// rectangle detector, and the gates below reject skewed/sized-off quads.
+    static func contourQuads(from observations: [VNContoursObservation]) -> [[CGPoint]] {
+        var out: [[CGPoint]] = []
+        for observation in observations {
+            let path = observation.normalizedPath
+            var minX = CGFloat.greatestFiniteMagnitude
+            var minY = CGFloat.greatestFiniteMagnitude
+            var maxX = -CGFloat.greatestFiniteMagnitude
+            var maxY = -CGFloat.greatestFiniteMagnitude
+            var pointCount = 0
+            func reset() {
+                minX = .greatestFiniteMagnitude; minY = .greatestFiniteMagnitude
+                maxX = -.greatestFiniteMagnitude; maxY = -.greatestFiniteMagnitude
+                pointCount = 0
+            }
+            func finishSubpath() {
+                defer { reset() }
+                guard pointCount >= 4 else { return }
+                let w = maxX - minX, h = maxY - minY
+                let area = w * h
+                // Area window mirrors the rectangle request's minimumSize (0.12
+                // of the image => ~0.015 normalized area); the aspect window
+                // brackets the ID-1 ratio (0.63 portrait / 1.585 landscape)
+                // generously — CardQuality gates do the strict check.
+                guard area >= 0.015, area <= 1.0 else { return }
+                guard h > 0, w / h >= 0.45, w / h <= 2.25 else { return }
+                // y-up normalized space => "top" is maxY.
+                out.append([
+                    CGPoint(x: minX, y: maxY), CGPoint(x: maxX, y: maxY),
+                    CGPoint(x: maxX, y: minY), CGPoint(x: minX, y: minY),
+                ])
+            }
+            func acc(_ p: CGPoint) {
+                minX = min(minX, p.x); maxX = max(maxX, p.x)
+                minY = min(minY, p.y); maxY = max(maxY, p.y)
+                pointCount += 1
+            }
+            // Dispatch on the raw C values, not the imported Swift cases:
+            // CGPathElementType's Swift spelling has churned between SDKs
+            // (.lineToPoint vs .AddLineToPoint vs .addLineToPoint), but the
+            // underlying CGGeometry.h enum order has been ABI-stable since
+            // the 90s (1=move, 2=line, 3=quad, 4=cubic, 5=close).
+            path.applyWithBlock { elementPtr in
+                let element = elementPtr.pointee
+                switch element.type.rawValue {
+                case 1: // kCGPathElementMoveToPoint — starts a new subpath
+                    finishSubpath()
+                    acc(element.points[0])
+                case 2: // kCGPathElementAddLineToPoint
+                    acc(element.points[0])
+                case 3: // kCGPathElementAddQuadCurveToPoint — ctrl + endpoint
+                    acc(element.points[0])
+                    acc(element.points[1])
+                case 4: // kCGPathElementAddCurveToPoint — two ctrls + endpoint
+                    acc(element.points[0])
+                    acc(element.points[1])
+                    acc(element.points[2])
+                case 5: // kCGPathElementCloseSubpath
+                    finishSubpath()
+                default: // kCGPathElementEmpty
+                    break
+                }
+            }
+            // Unterminated trailing subpath (path built without explicit close).
+            finishSubpath()
+        }
+        return out
+    }
+
+    /// Pure selection logic (testable without Vision): score candidate quads as cards.
     public static func pickCard(
-        from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int
+        from quads: [[CGPoint]], pixelWidth: Int, pixelHeight: Int
     ) -> [CGPoint]? {
-        pick(from: observations, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+        pick(from: quads, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
              gate: CardQuality.isPlausibleCardQuad)
     }
 
     static func pickSuggestable(
-        from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int
+        from quads: [[CGPoint]], pixelWidth: Int, pixelHeight: Int
     ) -> [CGPoint]? {
-        pick(from: observations, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+        pick(from: quads, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
              gate: CardQuality.isSuggestableCardQuad)
     }
 
     private static func pick(
-        from observations: [VNRectangleObservation], pixelWidth: Int, pixelHeight: Int,
+        from quads: [[CGPoint]], pixelWidth: Int, pixelHeight: Int,
         gate: ([CGPoint], Double) -> Bool
     ) -> [CGPoint]? {
         let imageArea = Double(pixelWidth * pixelHeight)
         var bestQuad: [CGPoint]?
         var bestScore = 0.0
-        for obs in observations {
-            guard let quad = orderedQuad(
-                observation: obs, pixelWidth: pixelWidth, pixelHeight: pixelHeight
-            ) else { continue }
+        for corners in quads {
+            guard corners.count == 4,
+                  let quad = orderedQuad(
+                    corners: corners, pixelWidth: pixelWidth, pixelHeight: pixelHeight
+                  ) else { continue }
             guard gate(quad, imageArea) else { continue }
             let score = CardQuality.score(quad, imageArea: imageArea)
             if score > bestScore { bestScore = score; bestQuad = quad }
@@ -95,9 +171,8 @@ public enum CardDetector {
     /// Vision observations use normalized coordinates with a bottom-left origin;
     /// convert to y-down pixels and pipeline corner ordering.
     public static func orderedQuad(
-        observation: VNRectangleObservation, pixelWidth: Int, pixelHeight: Int
+        corners: [CGPoint], pixelWidth: Int, pixelHeight: Int
     ) -> [CGPoint]? {
-        let corners = [observation.topLeft, observation.topRight, observation.bottomRight, observation.bottomLeft]
         let pts = corners.map {
             CGPoint(x: $0.x * CGFloat(pixelWidth), y: (1 - $0.y) * CGFloat(pixelHeight))
         }

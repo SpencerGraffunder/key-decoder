@@ -125,7 +125,14 @@ struct KeySystemDiagram: View {
                            width: X(0.30) - X(0.12), height: size.height * 0.13),
                 cornerSize: CGSize(width: 3, height: 3))
             context.fill(bow, with: .color(.secondary.opacity(0.45)))
-            context.fill(slot, with: .color(.background.opacity(0.9)))
+            // Color.opacity(_:) now resolves to the ShapeStyle overload here
+            // (returns `some ShapeStyle`, not Color) — dim via the context
+            // copy instead, which is what GraphicsContext opacity is for.
+            // UIColor-bridged color: the bare `background` name here hits
+            // View.background method overloads instead of a Color property.
+            var faded = context
+            faded.opacity *= 0.9
+            faded.fill(slot, with: .color(Color(uiColor: .systemBackground)))
 
             let shoulderEnd = bowIn + shoulderIn
             let firstCut = shoulderEnd + 0.08
