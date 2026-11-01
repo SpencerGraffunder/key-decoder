@@ -5,6 +5,7 @@ import XCTest
 @testable import KeyCore
 @testable import KeyDecoder
 
+@MainActor
 final class ExportImportTests: XCTestCase {
     private func makeContainer() throws -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
