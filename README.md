@@ -53,7 +53,7 @@ and packages the unsigned `KeyDecoder.ipa` (`Payload/KeyDecoder.app`, built with
 `CODE_SIGNING_ALLOWED=NO`).
 
 The fastest way to install it is the downloads page, which always links the
-latest release of each project: <https://spencergraffunder.github.io/pianobar-ios/>.
+latest release of each project: <https://spencergraffunder.github.io/#ios-apps>.
 The same `.ipa` is also attached to the GitHub **release** here — the rolling
 `ios-latest` release on every `main` push, or the matching tag for a `v*` push.
 Release assets download as the **bare `.ipa`**; the run artifact is a zip-wrapped

@@ -19,6 +19,10 @@ name: ios
 on:
   push:
     branches: [ main ]
+    # Docs-only pushes must not burn 30 mac minutes rebuilding the same ipa.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
     tags:
       - 'v*'
   pull_request:
