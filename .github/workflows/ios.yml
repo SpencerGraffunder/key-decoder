@@ -25,20 +25,24 @@ on:
       - 'docs/**'
     tags:
       - 'v*'
-  pull_request:
-  workflow_dispatch:
+  workflow_dispatch:  # NB: no pull_request — self-hosted runners must never
+                       # execute unreviewed fork code on Spec's Mac.
 
 # Needed to publish the .ipa as a release asset.
 permissions:
   contents: write
 
+# LaunchAgent services get a minimal PATH; /usr/bin/jq is not a macOS guarantee.
+env:
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
 jobs:
   build:
     if: >-
-      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') &&
        github.ref != 'refs/heads/main')
-    runs-on: macos-latest
+    runs-on: [self-hosted, nuclear-mac]
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +66,7 @@ jobs:
       startsWith(github.ref, 'refs/tags/') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: macos-latest
+    runs-on: [self-hosted, nuclear-mac]
     steps:
       - uses: actions/checkout@v4
 
