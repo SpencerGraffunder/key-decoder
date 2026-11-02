@@ -174,12 +174,12 @@ final class CameraController: NSObject {
     /// made landscape shots of a table card arrive rotated 90°, which in turn
     /// sent the CV pipeline after the wrong blob. Quantize to the nearest
     /// right angle so a slightly-canted grip still produces an upright photo.
-    private func photoRotationAngle() -> Float {
+    private func photoRotationAngle() -> CGFloat {
         var a = (90.0 - rollDegrees).truncatingRemainder(dividingBy: 360)
         if a < 0 { a += 360 }
         var q = (a / 90).rounded() * 90
         if q >= 360 { q -= 360 }
-        return Float(q)
+        return CGFloat(q)   // AVCaptureConnection.videoRotationAngle / isVideoRotationAngleSupported take CGFloat, not Float
     }
 
     var qualityHint: (String, Color) {
