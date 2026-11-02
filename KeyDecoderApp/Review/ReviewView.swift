@@ -62,45 +62,25 @@ struct ReviewView: View {
         .padding(.top, 4)
     }
 
-    /// Top three ranked systems — the CURRENT one highlighted first — each
-    /// carrying the evidence behind it ("stamped "KW1"", "spacing ~.151 · 5
-    /// cuts"). Tap any other to switch instantly.
+    /// Top three ranked systems — the CURRENT one highlighted — each carrying
+    /// the evidence behind it. Chip is its own view: nested ternaries inside
+    /// buttonStyle/Text here blew the type-checker budget on CI.
     private var suggestionChips: some View {
-        let shown = flow.suggestions.prefix(3)
+        let top = Array(flow.suggestions.prefix(3))
         return Group {
-            if !shown.isEmpty {
+            if !top.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         Label("System:", systemImage: "wand.and.stars")
                             .font(.caption2).foregroundStyle(.secondary)
-                        ForEach(Array(shown), id: \.system.id) { s in
-                            let isCurrent = s.system.id == flow.systemID
-                            Button {
-                                if !isCurrent { flow.setSystem(s.system.id) }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    HStack(spacing: 3) {
-                                        if isCurrent {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 9))
-                                        }
-                                        Text(s.system.name).font(.caption.weight(.semibold))
-                                    }
-                                    Text(isCurrent
-                                         ? (s.reason ?? "in use")
-                                         : (s.reason ?? "tap to switch"))
-                                        .font(.caption2)
-                                        .foregroundStyle(isCurrent ? .primary.opacity(0.75) : .secondary)
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 8).padding(.vertical, 3)
+                        ForEach(top, id: \.system.id) { s in
+                            SuggestionChip(
+                                name: s.system.name,
+                                reason: s.reason,
+                                isCurrent: s.system.id == flow.systemID
+                            ) {
+                                if s.system.id != flow.systemID { flow.setSystem(s.system.id) }
                             }
-                            .buttonStyle(isCurrent ? AnyButtonStyle(.borderedProminent)
-                                                   : AnyButtonStyle(.bordered))
-                            .buttonBorderShape(.capsule)
-                            .accessibilityLabel(isCurrent
-                                ? "\(s.system.name), current system"
-                                : "\(s.system.name). \(s.reason ?? "Switch to it")")
                         }
                     }
                 }
@@ -465,6 +445,57 @@ struct ReviewView: View {
             case .outOfTableCuts: return "Some depths are outside the key system table; consider another system."
             case .lowConfidenceCuts: return "Some cuts sit near a depth boundary — verify before copying."
             }
+        }
+    }
+}
+
+// MARK: - Suggestion chip
+
+private struct SuggestionChip: View {
+    let name: String
+    let reason: String?
+    let isCurrent: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 3) {
+                    if isCurrent {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
+                    }
+                    Text(name).font(.caption.weight(.semibold))
+                }
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(isCurrent ? Color.primary.opacity(0.75) : Color.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+        }
+        .buttonBorderShape(.capsule)
+        .modifier(ChipProminence(current: isCurrent))
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var subtitle: String {
+        if let reason { return reason }
+        return isCurrent ? "in use" : "tap to switch"
+    }
+
+    private var accessibilityText: String {
+        if isCurrent { return "\(name), current system. \(subtitle)" }
+        return "\(name). \(subtitle)"
+    }
+}
+
+private struct ChipProminence: ViewModifier {
+    let current: Bool
+    func body(content: Content) -> some View {
+        if current {
+            content.buttonStyle(.borderedProminent)
+        } else {
+            content.buttonStyle(.bordered)
         }
     }
 }
