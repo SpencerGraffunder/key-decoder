@@ -417,10 +417,10 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         frameIndex += 1
         guard liveHintsEnabled, !liveInFlight, frameIndex % 5 == 0 else { return }
         liveInFlight = true
-        let snapshot = CMSampleBufferRetain(sampleBuffer)
+        // CMSampleBuffer is a bridged CF type — ARC keeps it alive for the
+        // closure; the C retain/release macros are not imported into Swift.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let hit = Self.detectLive(snapshot)
-            CMSampleBufferRelease(snapshot)
+            let hit = Self.detectLive(sampleBuffer)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.apply(hit: hit)
