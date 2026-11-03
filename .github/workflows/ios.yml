@@ -1,12 +1,15 @@
 #
 # iOS CI — build the KeyDecoder iOS app and publish an unsigned .ipa.
 #
-#   build      — on PRs / branch pushes that touch app code: compile check only.
-#   tests-ipa  — on a push to main, a tag push (v*), or manual "Run workflow":
-#                simulator unit tests, then a Release build packaged as
-#                KeyDecoder.ipa — uploaded as a run artifact AND published as
-#                a GitHub Release. Tag pushes publish under their tag name;
-#                everything else refreshes the rolling 'ios-latest' release.
+#   build      — on pushes to non-main branches: compile check only.
+#   tests-ipa  — on a push to main or manual "Run workflow": simulator unit
+#                tests, then a Release build packaged as
+#                KeyDecoder-<version>-<build>.ipa — uploaded as a run artifact
+#                AND published as ITS OWN GitHub Release, tagged and titled
+#                with the exact version stamped into the IPA (e.g.
+#                26.11.3-19 / "KeyDecoder 26.11.3 (19)"). One release per
+#                build; each is marked --latest so releases/latest (and the
+#                website download button) always resolves to the newest build.
 #
 # The .ipa is UNSIGNED by design (free app, no paid Apple developer account):
 # re-sign it with your free Apple ID via Sideloadly / AltStore / Xcode to install.
@@ -23,10 +26,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-    tags:
-      - 'v*'
+    # NB: no tag trigger — version tags are CREATED by the release step of
+    # main builds; triggering on them would double-build every push.
   workflow_dispatch:  # NB: no pull_request — self-hosted runners must never
-                       # execute unreviewed fork code on Spec's Mac.
+                      # execute unreviewed fork code on Spec's Mac.
 
 # Needed to publish the .ipa as a release asset.
 permissions:
@@ -39,9 +42,7 @@ env:
 jobs:
   build:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') &&
-       github.ref != 'refs/heads/main')
+      github.event_name == 'push' && github.ref != 'refs/heads/main'
     runs-on: [self-hosted, nuclear-mac]
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +64,6 @@ jobs:
 
   tests-ipa:
     if: >-
-      startsWith(github.ref, 'refs/tags/') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: [self-hosted, nuclear-mac]
@@ -85,11 +85,9 @@ jobs:
         run: |
           # LiveContainer shows CFBundleShortVersionString; a static 1.0 made
           # every sideloaded build indistinguishable. yy.m.d + CI run number.
-          if [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then
-            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"   # v1.2.3 tag push
-          else
-            echo "APP_VERSION=$(date -u +%y.%-m.%-d)" >> "$GITHUB_ENV"
-          fi
+          # THE SAME version stamps the bundle, the .ipa asset, the release
+          # tag and the release title — what you install is what you see.
+          echo "APP_VERSION=$(date -u +%y.%-m.%-d)" >> "$GITHUB_ENV"
           echo "APP_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Run unit tests (iOS simulator)
@@ -115,43 +113,43 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="-" \
             build
 
-      - name: Assemble .ipa
+      - name: Assemble .ipa (asset named with the version)
         run: |
+          ASSET="KeyDecoder-${APP_VERSION}-${APP_BUILD}.ipa"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
           APP=$(find dd-device/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           echo "Bundling $APP"
           mkdir -p ipa-staging/Payload
           cp -R "$APP" ipa-staging/Payload/
           cd ipa-staging
-          zip -qry ../KeyDecoder.ipa Payload
+          zip -qry ../"$ASSET" Payload
           cd ..
-          ls -lh KeyDecoder.ipa
+          ls -lh "$ASSET"
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KeyDecoder.ipa
-          path: KeyDecoder.ipa
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
           if-no-files-found: error
 
-      - name: Publish .ipa as GitHub Release (bare file, no zip)
+      - name: Publish per-build GitHub Release (bare .ipa asset)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Tag pushes publish under their tag name; everything else
-          # refreshes the rolling 'ios-latest' release. Release assets
-          # download as the bare .ipa — that is the download path the
-          # pianobar-ios site links to (Actions artifacts are always
-          # zipped, hence they are convenience copies only).
-          TAG=ios-latest
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="$GITHUB_REF_NAME"
-          fi
+          # One release per build on main, tag + title identical to the
+          # version stamped into the IPA bundle. --latest keeps
+          # releases/latest (the website download link and any
+          # 'latest release' tooling) pointing at the newest build.
+          TAG="${APP_VERSION}-${APP_BUILD}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" KeyDecoder.ipa --clobber
+            gh release upload "$TAG" "$ASSET" --clobber
           else
-            gh release create "$TAG" KeyDecoder.ipa \
-              --title "iOS build ($TAG)" \
-              --notes "Unsigned .ipa from CI. Re-sign with Sideloadly / AltStore / an ad-hoc profile to install."
+            gh release create "$TAG" "$ASSET" \
+              --target "$GITHUB_SHA" \
+              --title "KeyDecoder ${APP_VERSION} (${APP_BUILD})" \
+              --latest \
+              --notes "Build ${APP_BUILD} of ${APP_VERSION}. Version visible in LiveContainer = CFBundleShortVersionString ${APP_VERSION} (${APP_BUILD}). Unsigned .ipa — re-sign with Sideloadly / AltStore / an ad-hoc profile to install."
           fi
           gh release view "$TAG"
 
@@ -164,5 +162,5 @@ jobs:
           # build — the GitHub Release stays the canonical download.
           DEST="$HOME/Library/Mobile Documents/com~apple~CloudDocs/IPAs"
           mkdir -p "$DEST"
-          cp -f KeyDecoder.ipa "$DEST/KeyDecoder.ipa"
+          cp -f "$ASSET" "$DEST/$ASSET"
           ls -lh "$DEST"
