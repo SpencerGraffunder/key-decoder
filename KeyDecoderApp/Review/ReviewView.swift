@@ -84,6 +84,14 @@ struct ReviewView: View {
                     }
                     .accessibilityLabel(keyZoomActive ? "Show whole photo" : "Zoom to key")
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        flow.flipBladeAxis()
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    .accessibilityLabel("Flip spine/base axis")
+                }
             }
         }
         .onAppear {

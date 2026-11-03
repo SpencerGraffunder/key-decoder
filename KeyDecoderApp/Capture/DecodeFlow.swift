@@ -299,6 +299,16 @@ final class DecodeFlow {
         remeasureManual()
     }
 
+    /// Swap which side of the blade is the spine — when the auto analysis
+    /// caught the blade upside down (top line and base line on the wrong
+    /// axis) and no drag makes it right (Spec).
+    func flipBladeAxis() {
+        guard var params else { return }
+        params.direction = -params.direction
+        self.params = params
+        remeasureManual()
+    }
+
     func dragCut(_ index: Int, toImagePoint point: CGPoint) {
         guard let blade = scene?.blade, var params, let result,
               currentSystem != nil else { return }
