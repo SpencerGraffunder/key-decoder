@@ -19,6 +19,10 @@ struct ReviewView: View {
     // MARK: - State
 
     @State private var loupeFocus: CGPoint?
+    /// Finger position minus the lift while dragging a marker (view space):
+    /// the adjusted point and loupe ride ABOVE the finger (Spec).
+    @State private var dragPoint: CGPoint?
+    private static let dragLift: CGFloat = 70
     @State private var pickMode = false
 
     @State private var zoom: CGFloat = 1
@@ -58,6 +62,16 @@ struct ReviewView: View {
                     Image(systemName: "questionmark.circle")
                 }
                 .accessibilityLabel("Key ID guide")
+            }
+            if flow.photo != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        flow.step = .cardEditor
+                    } label: {
+                        Image(systemName: "rectangle.dashed")
+                    }
+                    .accessibilityLabel("Adjust card corners")
+                }
             }
             if keyConfirmed && flow.scene != nil {
                 ToolbarItem(placement: .topBarLeading) {
@@ -195,13 +209,24 @@ struct ReviewView: View {
                             ring(color: h.color).position(h.point)
                         }
                     }
+
+                    if let dp = dragPoint {
+                        Path { p in
+                            p.move(to: CGPoint(x: dp.x - 10, y: dp.y))
+                            p.addLine(to: CGPoint(x: dp.x + 10, y: dp.y))
+                            p.move(to: CGPoint(x: dp.x, y: dp.y - 10))
+                            p.addLine(to: CGPoint(x: dp.x, y: dp.y + 10))
+                        }
+                        .stroke(.red.opacity(0.95), lineWidth: 1.5)
+                        .allowsHitTesting(false)
+                    }
                 }
                 .contentShape(Rectangle())
                 .gesture(dragGesture(fit: fit, handles: hs))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 // Outside the clip: the bubble may spill past the frame — Spec
                 // prefers that over being squeezed inside.
-                .modifier(LoupeOverlay(
+                .modifier(ScreenLoupe(
                     image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
                 ))
                 .overlay(alignment: .top) { confirmBanner }
@@ -246,8 +271,8 @@ struct ReviewView: View {
         Circle()
             .fill(.white.opacity(0.12))
             .overlay(Circle().stroke(color, lineWidth: 2.5))
-            .overlay(Circle().fill(color).frame(width: 4, height: 4))
-            .frame(width: 26, height: 26)
+            .overlay(Circle().fill(color).frame(width: 5, height: 5))
+            .frame(width: 32, height: 32)
             .shadow(radius: 2)
             .allowsHitTesting(false)
     }
@@ -303,19 +328,28 @@ struct ReviewView: View {
         guard let scene = flow.scene, let params = flow.params else { return [] }
         let blade = scene.blade
         var out: [ReviewHandle] = [
+            // Shoulder drag sits at the blade's BOTTOM corner so it never
+            // collides with the spine line's shoulder-end handle.
             ReviewHandle(
                 id: -100,
-                point: fit.toView(blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))),
+                point: fit.toView(blade.xy(
+                    u: params.shoulderU,
+                    v: params.spine.v(at: params.shoulderU) + blade.bladeWidthPx * 1.15
+                )),
                 color: .yellow
             ) { p in flow.dragShoulder(toImagePoint: fit.toImage(p)) },
+            // Spine line, END handles: each end pivots the line about the
+            // other — fixes a spine caught on the wrong axis (Spec).
             ReviewHandle(
                 id: -101,
-                point: fit.toView(blade.xy(
-                    u: (params.shoulderU + blade.tipU) / 2,
-                    v: params.spine.v(at: (params.shoulderU + blade.tipU) / 2)
-                )),
+                point: fit.toView(blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))),
                 color: .cyan
-            ) { p in flow.dragSpine(toImagePoint: fit.toImage(p)) },
+            ) { p in flow.dragSpineEnd(atU: params.shoulderU, toImagePoint: fit.toImage(p)) },
+            ReviewHandle(
+                id: -102,
+                point: fit.toView(blade.xy(u: blade.tipU, v: params.spine.v(at: blade.tipU))),
+                color: .cyan
+            ) { p in flow.dragSpineEnd(atU: blade.tipU, toImagePoint: fit.toImage(p)) },
         ]
         for cut in result.cuts {
             let edgeV = blade.cutEdgeV(at: cut.centerU) ?? params.spine.v(at: cut.centerU)
@@ -361,8 +395,11 @@ struct ReviewView: View {
 
     private func act(value: DragGesture.Value, fit: ImageFit) {
         if let h = draggedHandle {
-            h.apply(value.location)
-            loupeFocus = fit.clampedToImage(value.location)
+            // Effective point rides ABOVE the finger; the crosshair marks it.
+            let raised = CGPoint(x: value.location.x, y: value.location.y - Self.dragLift)
+            h.apply(raised)
+            loupeFocus = fit.clampedToImage(raised)
+            dragPoint = raised
         } else if let ps = panStart {
             if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
             if didPan {
@@ -379,6 +416,7 @@ struct ReviewView: View {
         panStart = nil
         didPan = false
         loupeFocus = nil
+        dragPoint = nil
         if wasTap && (confirmStage || pickMode) {
             flow.pickKeyRegion(atImagePoint: fit.clampedToImage(end.startLocation))
             pickMode = false

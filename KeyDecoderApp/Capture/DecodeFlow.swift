@@ -100,8 +100,14 @@ final class DecodeFlow {
             CardDetector.detect(in: cg)
         }.value
         if let d = found, d.confident {
+            // Always route through the corner editor (Spec: auto-skip jumped
+            // straight to a badly-placed quad). The editor opens zoomed on the
+            // card with these corners pre-seeded, so a good detection is one
+            // "Use card" tap away.
             self.quad = d.quad
-            await analyze(with: d.quad, cg: cg)
+            cardDetectionFailed = false
+            statusMessage = "Card found — check the corner rings, then Use card."
+            step = .cardEditor
         } else if let d = found {
             // Low-confidence detection: seed the editor with the suggested
             // corners — confirming or nudging beats dragging four blanks, and
@@ -117,7 +123,11 @@ final class DecodeFlow {
     }
 
     func confirmQuad(_ newQuad: [CGPoint]) {
-        quad = newQuad
+        // Re-canonicalize TL,TR,BR,BL: pinwheel/swapped corner pairs fed to
+        // the homography produced mirrored or wildly stretched "rotated"
+        // corrected photos; ordering first makes the user's ring ORDER not
+        // matter, only WHICH corners they marked.
+        quad = QuadOrdering.order(newQuad) ?? newQuad
         step = .processing
         guard let cg = photo?.cgImage else { step = .capture; return }
         Task { await analyze(with: newQuad, cg: cg) }
@@ -130,7 +140,8 @@ final class DecodeFlow {
         let outcome = await Task.detached(priority: .userInitiated) { () -> AutoOutcome? in
             guard let corrected = MeasurementPipeline.correct(photo: cg, quad: quad),
                   let scene = MeasurementPipeline.analyzeScene(
-                    corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm
+                    corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm,
+                    marginFrac: 0.16
                   )
             else { return nil }
             var suggestions = SystemSuggester.suggest(
@@ -218,7 +229,8 @@ final class DecodeFlow {
                     suggestions: [SystemSuggestion])? in
                 guard let corrected = MeasurementPipeline.correct(photo: photoCG, quad: quad),
                       let scene = MeasurementPipeline.analyzeScene(
-                          corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm, seed: seed
+                          corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm, seed: seed,
+                          marginFrac: 0.16
                       )
                 else { return nil }
                 var suggestions = SystemSuggester.suggest(
@@ -266,6 +278,22 @@ final class DecodeFlow {
     func dragSpine(toImagePoint point: CGPoint) {
         guard let blade = scene?.blade, var params else { return }
         let uv = blade.uv(point)
+        params.spine.intercept = uv.v - params.spine.slope * uv.u
+        self.params = params
+        remeasureManual()
+    }
+
+    /// Drag one END of the spine line: the line pivots about the other end,
+    /// so the user can fix a spine that landed on the wrong axis (Spec).
+    func dragSpineEnd(atU u: Double, toImagePoint point: CGPoint) {
+        guard let blade = scene?.blade, var params else { return }
+        let uv = blade.uv(point)
+        let otherU: Double = (u == params.shoulderU) ? blade.tipU : params.shoulderU
+        let v1 = params.spine.v(at: otherU)
+        let du = uv.u - otherU
+        if abs(du) > 3 {
+            params.spine.slope = (uv.v - v1) / du
+        }
         params.spine.intercept = uv.v - params.spine.slope * uv.u
         self.params = params
         remeasureManual()

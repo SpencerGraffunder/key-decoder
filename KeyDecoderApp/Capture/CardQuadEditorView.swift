@@ -22,6 +22,9 @@ struct CardQuadEditorView: View {
 
     @State private var quad: [CGPoint]
     @State private var loupeFocus: CGPoint?
+    @State private var dragPoint: CGPoint?
+    @State private var quadWarning: String?
+    private static let dragLift: CGFloat = 70
 
     @State private var zoom: CGFloat = 1
     @State private var center: CGPoint?
@@ -63,6 +66,14 @@ struct CardQuadEditorView: View {
                                 in: fit.imageRectInView
                             )
                         }
+                        if let dp = dragPoint {
+                            var cross = Path()
+                            cross.move(to: CGPoint(x: dp.x - 10, y: dp.y))
+                            cross.addLine(to: CGPoint(x: dp.x + 10, y: dp.y))
+                            cross.move(to: CGPoint(x: dp.x, y: dp.y - 10))
+                            cross.addLine(to: CGPoint(x: dp.x, y: dp.y + 10))
+                            context.stroke(cross, with: .color(.red.opacity(0.95)), lineWidth: 1.5)
+                        }
                         var outline = Path()
                         let pts = quad.map(fit.toView)
                         outline.move(to: pts[0])
@@ -86,7 +97,7 @@ struct CardQuadEditorView: View {
                 .onTapGesture(count: 2) { toggleZoom() }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 // Outside the clip: the bubble is allowed to spill over the frame.
-                .modifier(LoupeOverlay(
+                .modifier(ScreenLoupe(
                     image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
                 ))
                 .onAppear { viewSize = geo.size }
@@ -101,8 +112,22 @@ struct CardQuadEditorView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            if let quadWarning {
+                Label(quadWarning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
             Button {
-                flow.confirmQuad(quad)
+                if quadWarning == nil, let w = Self.quadAspectWarning(quad) {
+                    // First tap on a non-card-shaped quad only warns — the
+                    // second tap confirms anyway. Never a dead end (Spec).
+                    quadWarning = w
+                } else {
+                    flow.confirmQuad(quad)
+                }
             } label: {
                 Text("Use card").frame(maxWidth: .infinity)
             }
@@ -119,9 +144,22 @@ struct CardQuadEditorView: View {
         Circle()
             .fill(.white.opacity(0.12))
             .overlay(Circle().stroke(color, lineWidth: 2.5))
-            .overlay(Circle().fill(color).frame(width: 4, height: 4))
-            .frame(width: 30, height: 30)
+            .overlay(Circle().fill(color).frame(width: 5, height: 5))
+            .frame(width: 34, height: 34)
             .shadow(radius: 2)
+    }
+
+    /// Sanity-check the marked quad against credit-card proportions
+    /// (1.586 landscape / 0.631 portrait, generous for perspective foreshortening).
+    static func quadAspectWarning(_ q: [CGPoint]) -> String? {
+        guard q.count == 4 else { return nil }
+        func d(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(b.x - a.x, b.y - a.y) }
+        let w = (d(q[0], q[1]) + d(q[3], q[2])) / 2
+        let hh = (d(q[0], q[3]) + d(q[1], q[2])) / 2
+        guard hh > 1, w > 1 else { return "That shape is degenerate — put the rings on the card's four corners." }
+        let ratio = w / hh
+        if abs(log(ratio / 1.586)) <= 0.42 || abs(log(ratio / 0.631)) <= 0.42 { return nil }
+        return String(format: "That doesn't look like a card (ratio %.2f, want ~1.59). Tap again to use it anyway, or move the rings onto the card corners.", ratio)
     }
 
     // MARK: - Gesture
@@ -137,6 +175,7 @@ struct CardQuadEditorView: View {
                 panStart = nil
                 didPan = false
                 loupeFocus = nil
+                dragPoint = nil
             }
     }
 
@@ -154,9 +193,14 @@ struct CardQuadEditorView: View {
 
     private func act(value: DragGesture.Value, fit: ImageFit) {
         if let i = activeCorner {
-            let p = fit.clampedToImage(value.location)
+            // Corner rides ABOVE the finger (with the crosshair marking it)
+            // so the fingertip never covers the ring being placed.
+            let raised = CGPoint(x: value.location.x, y: value.location.y - Self.dragLift)
+            let p = fit.clampedToImage(raised)
             quad[i] = p
             loupeFocus = p
+            dragPoint = raised
+            quadWarning = nil
         } else if let ps = panStart {
             if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
             if didPan {

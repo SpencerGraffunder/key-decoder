@@ -52,13 +52,79 @@ public enum CardDetector {
         quads.append(contentsOf: contourQuads(from: contours.results ?? []))
         guard !quads.isEmpty else { return nil }
 
-        if let quad = pickCard(from: quads, pixelWidth: image.width, pixelHeight: image.height) {
+        // Boundary-strength-scored pick: a quad only wins if the gradient
+        // actually runs along all four of its sides. Placemats, tablets and
+        // glare patches that Vision confidently boxes lose the sides with no
+        // edge under them; real cards keep all four even under partial glare
+        // (we take the middle two of the four per-side minima).
+        let grayFull = GrayImage(cgImage: image)
+        func scoredPick(strict: Bool) -> [CGPoint]? {
+            let imageArea = Double(image.width * image.height)
+            var bestQuad: [CGPoint]?
+            var bestScore = -Double.infinity
+            for corners in quads {
+                guard corners.count == 4,
+                      let quad = orderedQuad(corners: corners, pixelWidth: image.width, pixelHeight: image.height)
+                else { continue }
+                let gate: ([CGPoint], Double) -> Bool =
+                    strict ? CardQuality.isPlausibleCardQuad : CardQuality.isSuggestableCardQuad
+                guard gate(quad, imageArea) else { continue }
+                var score = CardQuality.score(quad, imageArea: imageArea)
+                if let g = grayFull {
+                    let b = boundaryStrength(g, quad: quad)
+                    if strict, b < 25 { continue }
+                    if !strict, b < 10 { continue }
+                    score *= 1.0 + b / 100.0
+                }
+                if score > bestScore { bestScore = score; bestQuad = quad }
+            }
+            return bestQuad
+        }
+        if let quad = scoredPick(strict: true) {
             return CardDetection(quad: quad, confident: true)
         }
-        if let quad = pickSuggestable(from: quads, pixelWidth: image.width, pixelHeight: image.height) {
+        if let quad = scoredPick(strict: false) {
             return CardDetection(quad: quad, confident: false)
         }
         return nil
+    }
+
+    /// Gradient-along-quad-sides score (see scoredPick). Samples every side,
+    /// takes the strongest gradient within +/- `band` px along the side
+    /// normal, keeps the per-side MINIMA, then averages the middle two so one
+    /// glare-washed side can't veto an otherwise solid card.
+    public static func boundaryStrength(_ image: GrayImage, quad: [CGPoint],
+                                        band: Int = 4, samplesPerSide: Int = 20) -> Double {
+        guard quad.count == 4, image.width > 8, image.height > 8, samplesPerSide > 1 else { return 0 }
+        let w = image.width, h = image.height
+        func grad(_ x: Int, _ y: Int) -> Double {
+            guard x > 0, y > 0, x < w - 1, y < h - 1 else { return 0 }
+            let gx = Double(Int(image.pixel(x + 1, y)) - Int(image.pixel(x - 1, y)))
+            let gy = Double(Int(image.pixel(x, y + 1)) - Int(image.pixel(x, y - 1)))
+            return (gx * gx + gy * gy).squareRoot() / 2
+        }
+        var sideMin = [Double]()
+        for i in 0..<4 {
+            let a = quad[i], b = quad[(i + 1) % 4]
+            let ex = Double(b.x - a.x), ey = Double(b.y - a.y)
+            let len = max(1e-6, (ex * ex + ey * ey).squareRoot())
+            let nx = -ey / len, ny = ex / len
+            var worst = Double.greatestFiniteMagnitude
+            for k in 0..<samplesPerSide {
+                let t = (Double(k) + 0.5) / Double(samplesPerSide)
+                let px = Double(a.x) + ex * t, py = Double(a.y) + ey * t
+                var best = 0.0
+                var s = -Double(band)
+                while s <= Double(band) {
+                    best = max(best, grad(Int((px + nx * s).rounded()), Int((py + ny * s).rounded())))
+                    s += 1
+                }
+                worst = min(worst, best)
+            }
+            sideMin.append(worst)
+        }
+        sideMin.sort()
+        return (sideMin[1] + sideMin[2]) / 2
     }
 
     /// Axis-aligned bounding quad per contour subpath of the observation's

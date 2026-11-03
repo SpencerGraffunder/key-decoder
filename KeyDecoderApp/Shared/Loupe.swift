@@ -37,23 +37,28 @@ struct Loupe: View {
             )
         }
         .frame(width: size, height: size)
-        .background(.black.opacity(0.30))
+        // Circle backdrop — a plain .background here sat behind the SQUARE
+        // frame and drew the grey box Spec called "crappy".
+        .background(Circle().fill(.black.opacity(0.30)))
         .overlay(Circle().stroke(.white.opacity(0.95), lineWidth: 3))
-        .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+        .shadow(color: .black.opacity(0.45), radius: 10, y: 3)
         .allowsHitTesting(false)
     }
 }
 
-/// Positions the loupe ALWAYS directly above the finger (Spec: never below —
-/// below put it under the thumb). Attached OUTSIDE the image container's
-/// clip so the bubble may spill past the photo frame; it is only clamped
-/// enough to stay on screen horizontally and near the top edge.
-struct LoupeOverlay: ViewModifier {
+/// Floats the loupe directly above the FOCUS point (which the drag handlers
+/// keep ~70 pt above the finger). Applied outside the image clip but inside
+/// the page VStack — no vertical clamping at all, so the bubble may spill
+/// over the header, the photo frame edge, anything: Spec wants it "free to
+/// move about the whole screen" above the finger, never trapped in the
+/// image area. Horizontal position follows the focus (clamped only enough
+/// to keep the crosshair's worth of context on screen).
+struct ScreenLoupe: ViewModifier {
     let image: CGImage?
     let focus: CGPoint?          // image coords
     let fit: ImageFit
     let viewSize: CGSize
-    var loupeSize: CGFloat = 176
+    var loupeSize: CGFloat = 184
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .topLeading) {
@@ -61,8 +66,8 @@ struct LoupeOverlay: ViewModifier {
                 let p = fit.toView(focus)
                 Loupe(image: image, focus: focus, fit: fit, size: loupeSize)
                     .position(
-                        x: min(max(p.x, loupeSize * 0.40), max(viewSize.width - loupeSize * 0.40, loupeSize * 0.40)),
-                        y: max(p.y - loupeSize / 2 - 28, loupeSize / 2 + 2)
+                        x: min(max(p.x, loupeSize * 0.30), max(viewSize.width - loupeSize * 0.30, loupeSize * 0.30)),
+                        y: p.y - loupeSize / 2 - 26
                     )
             }
         }

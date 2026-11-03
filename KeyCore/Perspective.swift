@@ -17,6 +17,28 @@ public enum Perspective {
         Double(width) / 85.60
     }
 
+    /// Margin-aware scale: with `marginFrac` of the output frame padded with
+    /// surroundings on every side, the card spans only (1 - 2*marginFrac) of
+    /// the width, so its pixels-per-mm drops accordingly. Every downstream
+    /// consumer (segmentation margins, blade widths, cut windows) takes this
+    /// value — the padded frame is metrically consistent end to end.
+    public static func pixelsPerMm(forWidth width: Int, marginFrac: Double) -> Double {
+        Double(width) * (1.0 - 2.0 * marginFrac) / 85.60
+    }
+
+    /// Grow a card quad about its centroid so the warp source frame contains
+    /// the surroundings (`marginFrac` per side). A key hanging off the card
+    /// edge keeps its overhanging teeth in the corrected view instead of at
+    /// the warp boundary. Degenerate quads return nil.
+    public static func expandedQuad(_ quad: [CGPoint], marginFrac: Double) -> [CGPoint]? {
+        guard quad.count == 4, marginFrac > 0 else { return nil }
+        let cx = quad.reduce(0) { $0 + $1.x } / 4
+        let cy = quad.reduce(0) { $0 + $1.y } / 4
+        let scale = 1.0 / (1.0 - 2.0 * marginFrac)
+        guard scale.isFinite, scale > 1, scale < 8 else { return nil }
+        return quad.map { CGPoint(x: cx + ($0.x - cx) * scale, y: cy + ($0.y - cy) * scale) }
+    }
+
     /// Map `quad` (TL,TR,BR,BL in y-down pixels of `src`) onto a top-down card rectangle.
     public static func warpGray(
         _ src: GrayImage, quad: [CGPoint],

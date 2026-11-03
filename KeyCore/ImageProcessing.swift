@@ -124,7 +124,9 @@ public enum ConnectedComponents {
     /// Returns (mask, pixelCount, aspectOfPick).
     public static func bestKeyComponent(
         _ mask: [Bool], _ w: Int, _ h: Int,
-        minAreaFraction: Double = 0.015, minAspect: Double = 2.5
+        minAreaFraction: Double = 0.015, minAspect: Double = 2.5,
+        center: CGPoint? = nil, centerSigma: Double = 0,
+        aspectBoost: Double = 0.06, aspectBoostCap: Double = 1.5
     ) -> ([Bool], Int, Double) {
         let ids = label(mask, w, h)
         guard let ids else {
@@ -142,11 +144,17 @@ public enum ConnectedComponents {
             sxx[l, default: 0] += x * x; syy[l, default: 0] += y * y; sxy[l, default: 0] += x * y
         }
         let minArea = minAreaFraction * Double(w * h)
-        struct Cand { let l: Int, n: Int, aspect: Double }
+        // Scored pick: area x mild elongation boost x center proximity (the
+        // capture UI guides keys to the card center; long thin text bands and
+        // off-center accessories lose to the real key). Falls back to plain
+        // largest-area when nothing is elongated, so downstream aspect gates
+        // still route to the manual path.
+        struct Cand { let l: Int, n: Int, aspect: Double, score: Double }
         var elig = [Cand](), all = [Cand]()
-        for (l, n) in counts where Double(n) >= minArea {
+        for (l, n) in counts {
+            guard let sxL = sx[l] else { continue }
             let nd = Double(n)
-            let mx = sx[l]! / nd, my = sy[l]! / nd
+            let mx = sxL / nd, my = sy[l]! / nd
             let cxx = max(sxx[l]! / nd - mx * mx, 0)
             let cyy = max(syy[l]! / nd - my * my, 0)
             let cxy = sxy[l]! / nd - mx * my
@@ -155,14 +163,58 @@ public enum ConnectedComponents {
             let l1 = tr / 2 + disc
             let l2 = max(tr / 2 - disc, 1e-9)
             let aspect = (l1 / l2).squareRoot()
-            all.append(Cand(l: l, n: n, aspect: aspect))
-            if aspect >= minAspect { elig.append(Cand(l: l, n: n, aspect: aspect)) }
+            let centerBoost: Double
+            if let center, centerSigma > 0 {
+                let dx = mx - center.x, dy = my - center.y
+                let d2 = (dx * dx + dy * dy) / (centerSigma * centerSigma)
+                centerBoost = max(0.25, exp(-d2 * 2))
+            } else {
+                centerBoost = 1.0
+            }
+            let score = nd * (1.0 + min(aspectBoostCap, max(0, aspect - 2.5) * aspectBoost)) * centerBoost
+            let cand = Cand(l: l, n: n, aspect: aspect, score: score)
+            all.append(cand)
+            if nd >= minArea, aspect >= minAspect { elig.append(cand) }
         }
-        guard let pick = elig.max(by: { $0.n < $1.n }) ?? all.max(by: { $0.n < $1.n }) else {
+        guard let pick = elig.max(by: { $0.score < $1.score }) ?? all.max(by: { $0.score < $1.score }) else {
             return (Array(repeating: false, count: mask.count), 0, 0)
         }
         let out = ids.map { $0 == pick.l }
         return (out, pick.n, pick.aspect)
+    }
+
+    /// Sever thin bridges that glue soft shadows or specks onto the key:
+    /// erode twice, drop components that can't be the key (area < 0.4% of the
+    /// frame), dilate the survivors' labels back and AND with the original.
+    /// Broad-brimmed shadows survive erosion and stay attached — the MAD
+    /// threshold floor is what rejects those.
+    public static func detachWeakBridges(_ mask: inout [Bool], _ w: Int, _ h: Int) {
+        let eroded = Morphology.erode(mask, w, h, iterations: 2)
+        guard let ids = label(eroded, w, h) else { mask = Array(repeating: false, count: mask.count); return }
+        var counts = [Int: Int]()
+        for l in ids where l > 0 { counts[l, default: 0] += 1 }
+        let minArea = Int(0.004 * Double(w * h))
+        var keep = Set<Int>()
+        for (l, n) in counts where n >= minArea { keep.insert(l) }
+        guard !keep.isEmpty else { return }  // everything tiny: leave input untouched
+        // Multi-source BFS from surviving cores, 4-connected, max 2 rings.
+        var owner = [Int](repeating: 0, count: w * h)
+        var frontier = [Int]()
+        for i in ids.indices where keep.contains(ids[i]) { owner[i] = ids[i]; frontier.append(i) }
+        for _ in 0..<2 {
+            var next = [Int]()
+            for i in frontier {
+                let cx = i % w, cy = i / w
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = cx + dx, ny = cy + dy
+                    guard nx >= 0, ny >= 0, nx < w, ny < h else { continue }
+                    let j = ny * w + nx
+                    if owner[j] == 0, mask[j] { owner[j] = owner[i]; next.append(j) }
+                }
+            }
+            frontier = next
+        }
+        for i in mask.indices { mask[i] = mask[i] && owner[i] != 0 }
     }
 
     /// Keep only the largest 8-connected component. Returns (mask, pixelCount).

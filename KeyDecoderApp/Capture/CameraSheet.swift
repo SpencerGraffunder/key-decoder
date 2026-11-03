@@ -462,10 +462,14 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         // the real segmentation — the overlay shows what the app WOULD read.
         let wC = 700
         let hC = Perspective.outputHeight(forWidth: wC)
+        let marginFrac = 0.16
+        let sourceQuad = Perspective.expandedQuad(card.quad, marginFrac: marginFrac) ?? card.quad
         guard let warped = Perspective.warpGray(
-            gray, quad: card.quad, outputWidth: wC, outputHeight: hC
+            gray, quad: sourceQuad, outputWidth: wC, outputHeight: hC
         ), let scene = MeasurementPipeline.analyzeScene(
-            corrected: warped.image, pixelsPerMm: Perspective.pixelsPerMm(forWidth: wC)
+            corrected: warped.image,
+            pixelsPerMm: Perspective.pixelsPerMm(forWidth: wC, marginFrac: marginFrac),
+            marginFrac: marginFrac
         ) else { return nil }
 
         let m = scene.mask

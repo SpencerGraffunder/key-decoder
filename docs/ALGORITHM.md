@@ -18,34 +18,61 @@ resulting quad is y-down CW flipped, swap TR/BL ordering so the polygon reads
 TL→TR→BR→BL clockwise in y-down space.
 
 Output rect: fixed width W_out = 2600 px, H_out = round(W_out * 53.98/85.60) =
-1640 px. pixelsPerMm = W_out / 85.60 ≈ 30.37 (constant for the pipeline; the
-photo's native resolution does not matter).
+1640 px. PADDED WARP (v3): the source quad is grown about the card centroid by
+1/(1−2m), m = 0.16, so the corrected frame carries a ring of the photo around
+the card; the card itself spans the central (1−2m) region and
+pixelsPerMm = W_out·(1−2m) / 85.60 ≈ 20.65. Rationale: keys whose teeth hang
+past the card edge survived the warp as cropped blobs; the pad keeps them, and
+a padded metric flows through every downstream consumer unchanged. The card
+and key sit at slightly different depths (a few mm over ~60 cm), so the card
+homography is off by millimeters for the overhang — far inside the depth
+window. Legacy unpadded mode (m = 0) remains supported for direct corrected
+images; ppm for it stays W_out / 85.60.
 
-Homography: compute 3x3 projective transform mapping Q → (0,0),(W_out,0),
-(W_out,H_out),(0,H_out) via DLT (8-equation linear solve). Warp with inverse
-mapping + bilinear sampling (clamp borders).
+Homography: compute 3x3 projective transform mapping the (padded) Q →
+(0,0),(W_out,0),(W_out,H_out),(0,H_out) via DLT (8-equation linear solve).
+Warp with inverse mapping + bilinear sampling (clamp borders).
 
 Card sanity (when the quad came from auto-detection, not the manual handles):
 area fraction >= 15% of the image and aspect (long/short edge, edge-mean basis)
-in [1.30, 1.90]; else treat detection as failed → manual path.
+in [1.30, 1.90]; BOUNDARY STRENGTH (v3): sample the gradient magnitude along
+each quad side (max within ±4 px of the side normal), keep per-side minima,
+average the middle two — confident picks need >= 25 (suggestion tier >= 10),
+so flat-background hallucination quads from Vision lose to real edges. User
+quads from the editor skip sanity gates but get a one-tap aspect warning.
+Failing detection → manual path; a confident detection still lands in the
+corner editor with the corners pre-seeded (no silent auto-skip).
 
-### 2. Key mask (on the corrected image)
-1. Ignore a 2.0 mm inner margin of the corrected card image (card edges,
-   printed borders) — set those pixels to background.
-2. Background level B = median of a 1.5 mm band just inside the ignored margin
-   (card face color).
-3. Diff D = |g − B| (absolute luminance difference). This catches darker metal,
-   darker or lighter plastic heads, and bright specular metal on a light card.
-4. Threshold D with Otsu.
-5. Morphological close (3x3, 2 iterations) then open (3x3, 1 iteration).
-6. Connected-component pick (8-connected): among components with area ≥ 1.5%
-   of card area, prefer the most ELONGATED one — pixel-covariance aspect
-   sqrt(λ1/λ2) ≥ 2.5 — breaking ties by area. A split ring or fob resting on
-   the card (rounder, sometimes larger) must not hijack a plain largest-area
-   pick; the key may keep its ring, and the bow may hang off the card. If no
-   component is elongated, keep the largest; if the kept component ends below
-   1.5% area or aspect < 2.5, fail → manual path.
-7. Fill holes (background components not connected to the image border).
+### 2. Key mask (on the corrected image, v3)
+Legacy unpadded frames (m = 0) follow steps 1–7 with the SINGLE card-face
+background; padded frames (m = 0.16) differ where noted.
+1. Card rectangle C = central (1−2m) region on padded frames, else the whole
+   frame minus a 2.0 mm inner margin (card edges, printed borders).
+2. Card-face background B = median of a 1.5 mm band just inside C's edge;
+   sigma = 1.4826 × MAD of the same band (card texture level). On padded
+   frames also sample B_out = median of everything outside C but inside a
+   guarded frame edge (the photo's table/surroundings).
+3. Diff D = |g − B| inside C, |g − B_out| outside C (padded frames). A key
+   overhanging the edge therefore segments against the table, teeth included.
+4. Threshold t = max(Otsu(D), clamp(3.5·sigma, 12, 80)). The floor rejects
+   soft cast shadows (15–25 levels on real captures) that plain Otsu happily
+   glues onto the key; a real key sits 60+ levels out.
+5. Morphological close (3x3, 2 iterations) then open (3x3, 1 iteration). On
+   padded frames clear a 3 px band along C's border and the frame border
+   first: warp seams and hard card/table steps light up there as a hairline
+   ring that would glom onto overhanging keys and poison edge sampling.
+6. detachWeakBridges: erode 2×, drop components < 0.4% area, dilate survivors
+   2 rings back, AND with the mask — specks and thin shadow bridges snap off.
+7. Connected-component pick: among components with area >= 1.5% of CARD area
+   (scale the frame fraction by (1−2m)² on padded frames), prefer the most
+   ELONGATED one — pixel-covariance aspect sqrt(λ1/λ2) >= 2.5 — scored by
+   area x (1 + 0.06·(aspect−2.5), cap +1.5) x gaussian(center distance; the
+   capture UI guides keys to the card center). A split ring/fob (rounder,
+   sometimes larger) must not hijack the key; text bands and accessories lose
+   to center + elongation. If nothing is elongated keep the largest; below
+   the area floor or aspect < 2.5 with no head → fail, manual path. A seed
+   point (user "that's my key" tap) overrides the pick entirely (floor 0.4%).
+8. Fill holes (background components not connected to the image border).
 
 ### 3. Blade geometry
 From the key mask CC:

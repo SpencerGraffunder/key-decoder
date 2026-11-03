@@ -20,6 +20,9 @@ public enum MeasurementPipeline {
         public let mask: KeyMaskResult
         public let blade: BladeAnalysis
         public let pixelsPerMm: Double
+        /// Padded-frame fraction the scene was segmented with (0 = legacy
+        /// full-card frame, 0.16 = surroundings ring around the card).
+        public var marginFrac: Double = 0
     }
 
     public struct Output {
@@ -40,14 +43,24 @@ public enum MeasurementPipeline {
     /// Full photo + card quad → corrected gray/color views.
     #if canImport(CoreGraphics)
     public static func correct(
-        photo: CGImage, quad: [CGPoint], outputWidth: Int = Perspective.defaultOutputWidth
+        photo: CGImage, quad: [CGPoint], outputWidth: Int = Perspective.defaultOutputWidth,
+        marginFrac: Double = 0.16
     ) -> (gray: GrayImage, color: RGBAImage, pixelsPerMm: Double)? {
         let height = Perspective.outputHeight(forWidth: outputWidth)
-        let ppm = Perspective.pixelsPerMm(forWidth: outputWidth)
+        // Padded warp: grow the source quad about the card centroid so the
+        // corrected frame carries a ring of the photo around the card. A key
+        // whose teeth hang past the card edge then survives the warp instead
+        // of being cropped at the boundary. Card and key land at different
+        // depths (a few mm over ~60 cm), so the homography is slightly off
+        // for the overhang — millimeters, far inside the measurement window.
+        let source = marginFrac > 0 ? (Perspective.expandedQuad(quad, marginFrac: marginFrac) ?? quad) : quad
+        let ppm = marginFrac > 0
+            ? Perspective.pixelsPerMm(forWidth: outputWidth, marginFrac: marginFrac)
+            : Perspective.pixelsPerMm(forWidth: outputWidth)
         guard let warped = GrayImage(cgImage: photo),
-              let gray = Perspective.warpGray(warped, quad: quad, outputWidth: outputWidth, outputHeight: height),
+              let gray = Perspective.warpGray(warped, quad: source, outputWidth: outputWidth, outputHeight: height),
               let rgba = RGBAImage(cgImage: photo),
-              let color = Perspective.warpColor(rgba, quad: quad, outputWidth: outputWidth, outputHeight: height)
+              let color = Perspective.warpColor(rgba, quad: source, outputWidth: outputWidth, outputHeight: height)
         else { return nil }
         return (gray.image, color, ppm)
     }
@@ -55,12 +68,12 @@ public enum MeasurementPipeline {
 
     /// Corrected view → key mask + blade geometry. nil → manual review path.
     public static func analyzeScene(
-        corrected: GrayImage, pixelsPerMm: Double, seed: CGPoint? = nil
+        corrected: GrayImage, pixelsPerMm: Double, seed: CGPoint? = nil, marginFrac: Double = 0
     ) -> Scene? {
         let seedPair = seed.map { (x: Int($0.x.rounded()), y: Int($0.y.rounded())) }
-        guard let mask = KeySegmentation.segment(corrected, pixelsPerMm: pixelsPerMm, seed: seedPair),
+        guard let mask = KeySegmentation.segment(corrected, pixelsPerMm: pixelsPerMm, seed: seedPair, marginFrac: marginFrac),
               let blade = BladeAnalyzer.analyze(mask) else { return nil }
-        return Scene(corrected: corrected, mask: mask, blade: blade, pixelsPerMm: pixelsPerMm)
+        return Scene(corrected: corrected, mask: mask, blade: blade, pixelsPerMm: pixelsPerMm, marginFrac: marginFrac)
     }
 
     /// Auto measurement. Headless blobs are resolved by trying both axis directions.
