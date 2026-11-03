@@ -25,6 +25,10 @@ struct ResultView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 summary
+                KeyProfilePreview(
+                    digits: flow.result?.cuts.map(\.digit) ?? flow.manualDigits,
+                    system: system
+                )
                 fields
                 Button(action: save) {
                     Text("Save to library").frame(maxWidth: .infinity)

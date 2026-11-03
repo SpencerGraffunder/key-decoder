@@ -34,7 +34,7 @@ struct CameraSheet: View {
                 qualityBadge
                     .padding(.top, 8)
                 Spacer()
-                Text("Key flat inside the dashed outline, brand side up and readable, BOW (handle) to the LEFT. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
+                Text("Hold the phone UPRIGHT (portrait). Key flat inside the dashed outline, brand side up and readable, BOW (handle) to the LEFT. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .padding(8)
@@ -154,41 +154,29 @@ final class CameraController: NSObject {
     }
 
     func capture() {
-        let angle = photoRotationAngle()
+        // ALWAYS portrait (Spec): the whole capture UI, the card guide and the
+        // analysis assume an upright grip. Gravity-derived angles occasionally
+        // produced sideways photos from a canted hold — "rotates the picture
+        // inexplicably". Deterministic beats adaptive here.
         sessionQueue.async { [session, photoOutput] in
             guard session.isRunning,
                   let connection = photoOutput.connection(with: .video),
                   connection.isActive,
-                  connection.isVideoRotationAngleSupported(angle)
+                  connection.isVideoRotationAngleSupported(90)
             else {
                 DispatchQueue.main.async { self.lastError = "Camera warming up — try again in a moment" }
                 return
             }
-            connection.videoRotationAngle = angle
+            connection.videoRotationAngle = 90
             photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
         }
-    }
-
-    /// Orientation from GRAVITY, not the interface (the app is portrait-only,
-    /// so interfaceOrientation would always report portrait). A hardcoded 90°
-    /// made landscape shots of a table card arrive rotated 90°, which in turn
-    /// sent the CV pipeline after the wrong blob. Quantize to the nearest
-    /// right angle so a slightly-canted grip still produces an upright photo.
-    private func photoRotationAngle() -> CGFloat {
-        var a = (90.0 - rollDegrees).truncatingRemainder(dividingBy: 360)
-        if a < 0 { a += 360 }
-        var q = (a / 90).rounded() * 90
-        if q >= 360 { q -= 360 }
-        return CGFloat(q)   // AVCaptureConnection.videoRotationAngle / isVideoRotationAngleSupported take CGFloat, not Float
     }
 
     var qualityHint: (String, Color) {
         if brightness < 60 { return ("Too dark — add light", .orange) }
         if brightness > 225 { return ("Too bright — reduce glare", .orange) }
         if tiltDegrees > 35 { return ("Too tilted — hold the phone flat over the card", .orange) }
-        var rollErr = abs(rollDegrees.truncatingRemainder(dividingBy: 90))
-        rollErr = min(rollErr, 90 - rollErr)   // distance to nearest right-angle grip
-        if rollErr > 15 { return ("Hold the phone square — portrait or landscape", .yellow) }
+        if abs(rollDegrees) > 15 { return ("Hold the phone upright (portrait)", .yellow) }
         return ("Good — hold steady, then capture", .green)
     }
 

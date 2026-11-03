@@ -3,12 +3,35 @@ import UIKit
 
 /// Four draggable handles to place on the reference card's corners — the manual
 /// fallback whenever Vision cannot find the card (or the user prefers manual).
+///
+/// Interaction model (Spec feedback: markers were untouchable at the frame
+/// edges and the loupe invisible):
+/// - The image is rendered into a Canvas through `ImageFit`, so ONE coordinate
+///   space governs drawing and gestures (no SwiftUI transforms to fight).
+/// - A single full-frame drag gesture picks the nearest corner within 44 pt —
+///   fingers no longer need to land on a tiny dot — and drags anywhere else to
+///   PAN, so zoomed-in corners at the frame border stay reachable.
+/// - Starts zoomed onto the card (the capture hint says roughly where the card
+///   goes, so the default framing is the card itself); double-tap toggles
+///   whole-photo ↔ card-zoom.
+/// - The loupe rides ABOVE the finger and is attached outside the clip, so it
+///   may spill past the photo frame.
 struct CardQuadEditorView: View {
     let image: UIImage
     let flow: DecodeFlow
 
     @State private var quad: [CGPoint]
     @State private var loupeFocus: CGPoint?
+
+    @State private var zoom: CGFloat = 1
+    @State private var center: CGPoint?
+    @State private var viewSize: CGSize = CGSize(width: 375, height: 460)
+    @State private var zoomedToCard = false
+
+    /// Overlay-drag bookkeeping.
+    @State private var activeCorner: Int?
+    @State private var panStart: (center: CGPoint, scale: CGFloat)?
+    @State private var didPan = false
 
     init(image: UIImage, flow: DecodeFlow) {
         self.image = image
@@ -18,59 +41,65 @@ struct CardQuadEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Text(flow.statusMessage.isEmpty
-                 ? "Drag the four corners onto the corners of the reference card."
+                 ? "Drag the four rings onto the corners of the reference card."
                  : flow.statusMessage)
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
             GeometryReader { geo in
+                let pix = Self.pixelSize(of: image)
                 let fit = ImageFit(
-                    imageSize: Self.pixelSize(of: image),
-                    viewSize: geo.size
+                    imageSize: pix, viewSize: geo.size,
+                    zoom: zoom, center: center
                 )
                 ZStack(alignment: .topLeading) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: geo.size.width, height: geo.size.height)
-
-                    Path { path in
+                    Canvas { context, _ in
+                        if let cg = image.cgImage {
+                            context.draw(
+                                Image(decorative: cg, scale: 1),
+                                in: fit.imageRectInView
+                            )
+                        }
+                        var outline = Path()
                         let pts = quad.map(fit.toView)
-                        path.move(to: pts[0])
-                        for p in pts.dropFirst() { path.addLine(to: p) }
-                        path.closeSubpath()
+                        outline.move(to: pts[0])
+                        for p in pts.dropFirst() { outline.addLine(to: p) }
+                        outline.closeSubpath()
+                        context.stroke(
+                            outline,
+                            with: .color(.accentColor),
+                            style: StrokeStyle(lineWidth: 2, dash: [6, 4])
+                        )
                     }
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
 
                     ForEach(quad.indices, id: \.self) { i in
-                        Circle()
-                            .fill(.white.opacity(0.12))
-                            .overlay(Circle().stroke(Color.accentColor, lineWidth: 2.5))
-                            .overlay(Circle().fill(Color.accentColor).frame(width: 4, height: 4))
-                            .frame(width: 30, height: 30)
-                            .shadow(radius: 2)
+                        ring(color: .accentColor)
                             .position(fit.toView(quad[i]))
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        let p = fit.clampedToImage(value.location)
-                                        quad[i] = p
-                                        loupeFocus = p
-                                    }
-                                    .onEnded { _ in loupeFocus = nil }
-                            )
                             .accessibilityLabel("Card corner \(i + 1)")
                     }
                 }
+                .contentShape(Rectangle())
+                .gesture(dragGesture(fit: fit, handles: quad.map(fit.toView)))
+                .onTapGesture(count: 2) { toggleZoom() }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Outside the clip: the bubble is allowed to spill over the frame.
                 .modifier(LoupeOverlay(
                     image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
                 ))
+                .onAppear { viewSize = geo.size }
+                .onChange(of: geo.size) { _, new in viewSize = new }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(minHeight: 320)
             .padding(.horizontal)
+
+            Text(zoomedToCard
+                 ? "Drag outside a ring to pan · double-tap to see the whole photo"
+                 : "Double-tap to zoom onto the card")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Button {
                 flow.confirmQuad(quad)
@@ -83,7 +112,93 @@ struct CardQuadEditorView: View {
         }
         .navigationTitle("Reference card")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { initialFraming() }
     }
+
+    private func ring(color: Color) -> some View {
+        Circle()
+            .fill(.white.opacity(0.12))
+            .overlay(Circle().stroke(color, lineWidth: 2.5))
+            .overlay(Circle().fill(color).frame(width: 4, height: 4))
+            .frame(width: 30, height: 30)
+            .shadow(radius: 2)
+    }
+
+    // MARK: - Gesture
+
+    private func dragGesture(fit: ImageFit, handles: [CGPoint]) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                grabIfNeeded(start: value.startLocation, fit: fit, handles: handles)
+                act(value: value, fit: fit)
+            }
+            .onEnded { _ in
+                activeCorner = nil
+                panStart = nil
+                didPan = false
+                loupeFocus = nil
+            }
+    }
+
+    /// Nearest corner within 44 pt wins; a touch far from every ring pans.
+    private func grabIfNeeded(start: CGPoint, fit: ImageFit, handles: [CGPoint]) {
+        guard activeCorner == nil, panStart == nil else { return }
+        let distances: [CGFloat] = handles.map { hypot($0.x - start.x, $0.y - start.y) }
+        if let nearest = distances.indices.min(by: { distances[$0] < distances[$1] }),
+           let minDist = distances.min(), minDist <= 44 {
+            activeCorner = nearest
+        } else {
+            panStart = (fit.focus, fit.scale)
+        }
+    }
+
+    private func act(value: DragGesture.Value, fit: ImageFit) {
+        if let i = activeCorner {
+            let p = fit.clampedToImage(value.location)
+            quad[i] = p
+            loupeFocus = p
+        } else if let ps = panStart {
+            if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
+            if didPan {
+                center = fit.panTarget(from: ps.center, translation: value.translation)
+            }
+        }
+    }
+
+    // MARK: - Framing
+
+    /// Frame the card on entry: the capture hint tells the user to put the
+    /// card roughly dead-center, so the (auto- or default-) quad marks the
+    /// region worth magnifying — "zoom in a bit first" (Spec).
+    private func initialFraming() {
+        applyCardFraming()
+    }
+
+    private func applyCardFraming() {
+        let pix = Self.pixelSize(of: image)
+        let fit = ImageFit(imageSize: pix, viewSize: viewSize)
+        let pts = quad
+        guard let first = pts.first else { return }
+        var rect = CGRect(origin: first, size: .zero)
+        for p in pts.dropFirst() { rect = rect.union(CGRect(origin: p, size: .zero)) }
+        center = CGPoint(x: rect.midX, y: rect.midY)
+        zoom = fit.zoomToFit(rect: rect, fill: 0.62, maxZoom: 2.6)
+        zoomedToCard = zoom > 1.02
+    }
+
+    private func toggleZoom() {
+        withAnimation(.snappy) {
+            if zoomedToCard {
+                zoom = 1
+                center = nil
+                zoomedToCard = false
+            } else {
+                applyCardFraming()
+            }
+        }
+    }
+
+    // MARK: - Geometry helpers
 
     static func pixelSize(of image: UIImage) -> CGSize {
         guard let cg = image.cgImage else { return image.size }

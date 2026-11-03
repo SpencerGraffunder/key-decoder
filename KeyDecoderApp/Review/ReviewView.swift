@@ -1,22 +1,47 @@
 import SwiftUI
 import KeyCore
 
-/// Live review screen: draggable shoulder / spine / cut markers over the corrected
-/// photo, per-cut depths + digits, boundary flags, and manual digit entry.
+/// Live review screen, in two deliberate stages (Spec flow request):
+/// 1. CONFIRM THE KEY — the segmentation glows green over what the app thinks
+///    is the key; tap the key itself to re-detect, or confirm. Nothing else is
+///    editable until the key location is agreed.
+/// 2. ADJUST — the view zooms onto the confirmed key and every marker
+///    (shoulder/spine/cuts) can be dragged; the loupe rides above the finger.
+///
+/// All marker math lives in ONE coordinate space: the image and overlays are
+/// drawn into Canvases through `ImageFit` (no SwiftUI transforms), and a single
+/// full-frame drag gesture hit-tests the nearest handle within 44 pt — the old
+/// per-dot gestures reported locations in the tiny dot's own space, which made
+/// drags land nowhere and markers snap back on release.
 struct ReviewView: View {
     let flow: DecodeFlow
 
-    /// Image-space point under the finger while dragging a marker (loupe focus).
+    // MARK: - State
+
     @State private var loupeFocus: CGPoint?
-    /// "That's not my key" mode: next tap re-segments at the tapped blob.
     @State private var pickMode = false
+
+    @State private var zoom: CGFloat = 1
+    @State private var center: CGPoint?
+    @State private var viewSize: CGSize = CGSize(width: 375, height: 300)
+    @State private var keyZoomActive = false
+
+    @State private var keyConfirmed = false
+    @State private var glow: CGImage?
+
+    @State private var activeHandleID: Int?
+    @State private var draggedHandle: ReviewHandle?
+    @State private var panStart: (center: CGPoint, scale: CGFloat)?
+    @State private var didPan = false
+
+    private var confirmStage: Bool { flow.scene != nil && !keyConfirmed }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             if let result = flow.result, flow.scene != nil {
                 markersView(result)
-                pickKeyRow
+                confirmRow
                 cutList(result)
             } else {
                 manualEntry
@@ -34,6 +59,29 @@ struct ReviewView: View {
                 }
                 .accessibilityLabel("Key ID guide")
             }
+            if keyConfirmed && flow.scene != nil {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        withAnimation(.snappy) {
+                            if keyZoomActive { fitWhole() } else { zoomToKey() }
+                        }
+                    } label: {
+                        Image(systemName: keyZoomActive ? "arrow.up.left.and.arrow.down.right" : "viewfinder")
+                    }
+                    .accessibilityLabel(keyZoomActive ? "Show whole photo" : "Zoom to key")
+                }
+            }
+        }
+        .onAppear {
+            if flow.scene == nil { keyConfirmed = true }   // nothing to confirm in manual mode
+        }
+        .task(id: flow.pickGeneration) { glow = buildGlow() }
+        .onChange(of: flow.pickGeneration) { _, _ in
+            // A pick finished. Empty status = success.
+            guard flow.statusMessage.isEmpty else { return }
+            if confirmStage {
+                withAnimation(.snappy) { confirmKey() }
+            }
         }
     }
 
@@ -49,7 +97,7 @@ struct ReviewView: View {
                 systemMenu
             }
             suggestionChips
-            if uncertainCount > 0 {
+            if uncertainCount > 0 && !confirmStage {
                 Label(
                     "\(uncertainCount) cut(s) uncertain — nudge markers or set digits manually.",
                     systemImage: "exclamationmark.triangle.fill"
@@ -125,50 +173,88 @@ struct ReviewView: View {
     private func markersView(_ result: CutScanResult) -> some View {
         if let image = flow.correctedImage {
             GeometryReader { geo in
-                let fit = ImageFit(
-                    imageSize: CGSize(
-                        width: image.cgImage?.width ?? Int(image.size.width),
-                        height: image.cgImage?.height ?? Int(image.size.height)
-                    ),
-                    viewSize: geo.size
+                let pix = CGSize(
+                    width: image.cgImage?.width ?? Int(image.size.width),
+                    height: image.cgImage?.height ?? Int(image.size.height)
                 )
+                let fit = ImageFit(imageSize: pix, viewSize: geo.size, zoom: zoom, center: center)
+                let hs = makeHandles(result: result, fit: fit)
                 ZStack(alignment: .topLeading) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: geo.size.width, height: geo.size.height)
-
-                    if let blade = flow.scene?.blade, let params = flow.params {
-                        overlayLines(blade: blade, params: params, result: result, fit: fit)
-                        handles(blade: blade, result: result, fit: fit, size: geo.size)
+                    Canvas { context, _ in
+                        if let cg = image.cgImage {
+                            context.draw(Image(decorative: cg, scale: 1), in: fit.imageRectInView)
+                        }
+                        if let glow {
+                            context.draw(Image(decorative: glow, scale: 1), in: fit.imageRectInView)
+                        }
                     }
 
-                    if pickMode {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture { location in
-                                pickAttemptFeedback = flow.statusMessage
-                                flow.statusMessage = ""
-                                flow.pickKeyRegion(atImagePoint: fit.clampedToImage(location))
-                                pickMode = false
-                            }
+                    if let blade = flow.scene?.blade, flow.params != nil {
+                        overlayLines(blade: blade, result: result, fit: fit)
+                        ForEach(hs) { h in
+                            ring(color: h.color).position(h.point)
+                        }
                     }
                 }
+                .contentShape(Rectangle())
+                .gesture(dragGesture(fit: fit, handles: hs))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Outside the clip: the bubble may spill past the frame — Spec
+                // prefers that over being squeezed inside.
                 .modifier(LoupeOverlay(
                     image: image.cgImage, focus: loupeFocus, fit: fit, viewSize: geo.size
                 ))
+                .overlay(alignment: .top) { confirmBanner }
+                .overlay(alignment: .center) {
+                    if flow.isPicking {
+                        ProgressView("Finding your key…")
+                            .padding(12)
+                            .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .onAppear { viewSize = geo.size }
+                .onChange(of: geo.size) { _, new in viewSize = new }
             }
-            .frame(minHeight: 240)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(minHeight: 280)
             .padding(.horizontal)
             .padding(.vertical, 6)
         }
     }
 
-    private func overlayLines(
-        blade: BladeAnalysis, params: CutGridParams, result: CutScanResult, fit: ImageFit
-    ) -> some View {
+    @ViewBuilder
+    private var confirmBanner: some View {
+        if confirmStage {
+            VStack(spacing: 2) {
+                Label("Is the green glow on your key?", systemImage: "hand.tap")
+                    .font(.callout.weight(.semibold))
+                Text(flow.statusMessage.isEmpty
+                     ? "Tap your key itself to re-detect — or press “That’s my key” below."
+                     : flow.statusMessage)
+                    .font(.caption2)
+                    .foregroundStyle(flow.statusMessage.isEmpty ? Color.white.opacity(0.85) : Color.yellow)
+            }
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .padding(10)
+            .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+            .padding(8)
+        }
+    }
+
+    private func ring(color: Color) -> some View {
+        Circle()
+            .fill(.white.opacity(0.12))
+            .overlay(Circle().stroke(color, lineWidth: 2.5))
+            .overlay(Circle().fill(color).frame(width: 4, height: 4))
+            .frame(width: 26, height: 26)
+            .shadow(radius: 2)
+            .allowsHitTesting(false)
+    }
+
+    private func overlayLines(blade: BladeAnalysis, result: CutScanResult, fit: ImageFit) -> some View {
         Canvas { context, _ in
+            guard let params = flow.params else { return }
             let spineStart = blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))
             let spineEnd = blade.xy(u: blade.tipU, v: params.spine.v(at: blade.tipU))
             var spine = Path()
@@ -195,12 +281,9 @@ struct ReviewView: View {
                 var tick = Path()
                 tick.move(to: fit.toView(blade.xy(u: cut.centerU, v: params.spine.v(at: cut.centerU))))
                 tick.addLine(to: fit.toView(blade.xy(u: cut.centerU, v: edge)))
-                let color: Color = cut.isManualOverride ? .blue
-                    : cut.outOfTable ? .red
-                    : cut.lowConfidence ? .orange : .green
                 context.stroke(
                     tick,
-                    with: .color(color.opacity(0.95)),
+                    with: .color(ReviewView.cutColor(cut).opacity(0.95)),
                     style: StrokeStyle(lineWidth: 2, dash: [4, 3])
                 )
             }
@@ -208,101 +291,192 @@ struct ReviewView: View {
         .allowsHitTesting(false)
     }
 
-    private func handles(
-        blade: BladeAnalysis, result: CutScanResult, fit: ImageFit, size: CGSize
-    ) -> some View {
-        ZStack {
-            if let params = flow.params {
-                handle(position: fit.toView(
-                    blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))
-                ), color: .yellow, label: "Shoulder line", loupeMap: { fit.clampedToImage($0) }) { point in
-                    flow.dragShoulder(toImagePoint: fit.toImage(point))
-                }
-                let spineMidU = (params.shoulderU + blade.tipU) / 2
-                handle(position: fit.toView(
-                    blade.xy(u: spineMidU, v: params.spine.v(at: spineMidU))
-                ), color: .cyan, label: "Spine line", loupeMap: { fit.clampedToImage($0) }) { point in
-                    flow.dragSpine(toImagePoint: fit.toImage(point))
-                }
-            }
-            ForEach(result.cuts) { cut in
-                let edgeV = flow.scene?.blade.cutEdgeV(at: cut.centerU)
-                    ?? flow.params?.spine.v(at: cut.centerU) ?? 0
-                handle(
-                    position: fit.toView(flow.scene?.blade.xy(u: cut.centerU, v: edgeV) ?? .zero),
-                    color: cut.isManualOverride ? .blue
-                        : cut.outOfTable ? .red
-                        : cut.lowConfidence ? .orange : .green,
-                    label: "Cut \(cut.index + 1) center",
-                    loupeMap: { fit.clampedToImage($0) }
-                ) { point in
-                    flow.dragCut(cut.index, toImagePoint: fit.toImage(point))
-                }
-            }
-        }
-        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    private static func cutColor(_ cut: CutMeasurement) -> Color {
+        if cut.isManualOverride { return .blue }
+        if cut.outOfTable { return .red }
+        if cut.lowConfidence { return .orange }
+        return .green
     }
 
-    private func handle(
-        position: CGPoint, color: Color, label: String,
-        loupeMap: @escaping (CGPoint) -> CGPoint = { $0 },
-        action: @escaping (CGPoint) -> Void
-    ) -> some View {
-        // Ring, not a disc: a solid dot hides the very cut you are aligning.
-        Circle()
-            .fill(.white.opacity(0.12))
-            .overlay(Circle().stroke(color, lineWidth: 2.5))
-            .overlay(Circle().fill(color).frame(width: 4, height: 4))
-            .frame(width: 26, height: 26)
-            .shadow(radius: 2)
-            .position(position)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        action(value.location)
-                        loupeFocus = loupeMap(value.location)
-                    }
-                    .onEnded { _ in loupeFocus = nil }
-            )
-            .accessibilityLabel(label)
-            .accessibilityHint("Drag to adjust")
+    /// -100 shoulder, -101 spine, ≥0 cut index. apply receives a view-space point.
+    private func makeHandles(result: CutScanResult, fit: ImageFit) -> [ReviewHandle] {
+        guard let scene = flow.scene, let params = flow.params else { return [] }
+        let blade = scene.blade
+        var out: [ReviewHandle] = [
+            ReviewHandle(
+                id: -100,
+                point: fit.toView(blade.xy(u: params.shoulderU, v: params.spine.v(at: params.shoulderU))),
+                color: .yellow
+            ) { p in flow.dragShoulder(toImagePoint: fit.toImage(p)) },
+            ReviewHandle(
+                id: -101,
+                point: fit.toView(blade.xy(
+                    u: (params.shoulderU + blade.tipU) / 2,
+                    v: params.spine.v(at: (params.shoulderU + blade.tipU) / 2)
+                )),
+                color: .cyan
+            ) { p in flow.dragSpine(toImagePoint: fit.toImage(p)) },
+        ]
+        for cut in result.cuts {
+            let edgeV = blade.cutEdgeV(at: cut.centerU) ?? params.spine.v(at: cut.centerU)
+            out.append(ReviewHandle(
+                id: cut.index,
+                point: fit.toView(blade.xy(u: cut.centerU, v: edgeV)),
+                color: ReviewView.cutColor(cut)
+            ) { p in flow.dragCut(cut.index, toImagePoint: fit.toImage(p)) })
+        }
+        return out
     }
 
-    /// "the app grabbed the wrong object" escape hatch.
-    private var pickKeyRow: some View {
-        HStack(spacing: 8) {
-            Button {
-                pickMode.toggle()
-            } label: {
-                Label(pickMode ? "Cancel" : "Wrong key area? Tap the key",
-                      systemImage: "hand.tap")
+    // MARK: - One gesture for the whole frame
+
+    private func dragGesture(fit: ImageFit, handles hs: [ReviewHandle]) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                grabIfNeeded(start: value.startLocation, fit: fit, handles: hs)
+                act(value: value, fit: fit)
             }
-            .font(.caption)
-            .buttonStyle(.bordered)
-            if pickMode {
-                Text("Now tap directly on the key blade")
-                    .font(.caption2)
-                    .foregroundStyle(.yellow)
+            .onEnded { value in
+                release(fit: fit, end: value)
             }
-            Spacer()
+    }
+
+    /// First frame of a drag: nearest handle within 44 pt, else pan mode.
+    /// Handle-grabbing is disabled during key-confirm and re-pick, so a touch
+    /// anywhere (not on a handle) becomes a "tap to re-detect".
+    private func grabIfNeeded(start: CGPoint, fit: ImageFit, handles hs: [ReviewHandle]) {
+        guard activeHandleID == nil, panStart == nil else { return }
+        if !confirmStage && !pickMode {
+            let distances: [CGFloat] = hs.map {
+                hypot($0.point.x - start.x, $0.point.y - start.y)
+            }
+            if let nearest = distances.indices.min(by: { distances[$0] < distances[$1] }),
+               let minDist = distances.min(), minDist <= 44 {
+                activeHandleID = hs[nearest].id
+                draggedHandle = hs[nearest]
+            }
         }
-        .padding(.horizontal)
-        .overlay(alignment: .top) {
-            // Pick-failure feedback from the flow (re-pick attempts only).
-            if pickAttemptFeedback != nil && !flow.statusMessage.isEmpty {
-                Text(flow.statusMessage)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .padding(6)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+        if activeHandleID == nil { panStart = (fit.focus, fit.scale) }
+    }
+
+    private func act(value: DragGesture.Value, fit: ImageFit) {
+        if let h = draggedHandle {
+            h.apply(value.location)
+            loupeFocus = fit.clampedToImage(value.location)
+        } else if let ps = panStart {
+            if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
+            if didPan {
+                center = fit.panTarget(from: ps.center, translation: value.translation)
             }
         }
     }
 
-    /// Snapshot of the pre-tap statusMessage; shown only if the tap changes it
-    /// (i.e. it becomes the re-pick failure notice). Cleared on any change.
-    @State private var pickAttemptFeedback: String? = nil
+    private func release(fit: ImageFit, end: DragGesture.Value) {
+        let total = hypot(end.translation.width, end.translation.height)
+        let wasTap = total < 10 && draggedHandle == nil && !didPan
+        activeHandleID = nil
+        draggedHandle = nil
+        panStart = nil
+        didPan = false
+        loupeFocus = nil
+        if wasTap && (confirmStage || pickMode) {
+            flow.pickKeyRegion(atImagePoint: fit.clampedToImage(end.startLocation))
+            pickMode = false
+        }
+    }
 
+    // MARK: - Stages
+
+    /// Confirm button row during stage 1; re-pick affordance during stage 2.
+    @ViewBuilder
+    private var confirmRow: some View {
+        if confirmStage {
+            HStack {
+                Button {
+                    withAnimation(.snappy) { confirmKey() }
+                } label: {
+                    Label("That’s my key", systemImage: "checkmark.circle.fill")
+                        .frame(minWidth: 140)
+                }
+                .buttonStyle(.borderedProminent)
+                Spacer()
+            }
+            .padding(.horizontal)
+        } else {
+            HStack(spacing: 8) {
+                Button {
+                    pickMode.toggle()
+                } label: {
+                    Label(pickMode ? "Cancel" : "Wrong key? Tap to reselect", systemImage: "hand.tap")
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                if pickMode {
+                    Text("Now tap directly on the key blade")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                }
+                if !pickMode && !flow.statusMessage.isEmpty {
+                    Text(flow.statusMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private func confirmKey() {
+        keyConfirmed = true
+        zoomToKey()
+    }
+
+    private func zoomToKey() {
+        guard let bbox = flow.keyBBox(), let image = flow.correctedImage else {
+            fitWhole()
+            return
+        }
+        let pix = CGSize(
+            width: image.cgImage?.width ?? Int(image.size.width),
+            height: image.cgImage?.height ?? Int(image.size.height)
+        )
+        let fit = ImageFit(imageSize: pix, viewSize: viewSize)
+        center = CGPoint(x: bbox.midX, y: bbox.midY)
+        zoom = fit.zoomToFit(rect: bbox, fill: 0.72, maxZoom: 3.2)
+        keyZoomActive = true
+    }
+
+    private func fitWhole() {
+        zoom = 1
+        center = nil
+        keyZoomActive = false
+    }
+
+    /// Soft green alpha wash over the segmentation mask — "this is what the
+    /// app is reading as YOUR key".
+    private func buildGlow() -> CGImage? {
+        guard let scene = flow.scene else { return nil }
+        let m = scene.mask
+        guard m.width > 0, m.height > 0, m.mask.count == m.width * m.height else { return nil }
+        let alpha: UInt8 = 115
+        var pixels = [UInt8](repeating: 0, count: m.mask.count * 4)
+        for i in m.mask.indices where m.mask[i] {
+            // premultipliedLast: channels pre-scaled by their own alpha
+            pixels[i * 4] = UInt8(40 * Int(alpha) / 255)
+            pixels[i * 4 + 1] = UInt8(220 * Int(alpha) / 255)
+            pixels[i * 4 + 2] = UInt8(120 * Int(alpha) / 255)
+            pixels[i * 4 + 3] = alpha
+        }
+        guard let ctx = CGContext(
+            data: &pixels, width: m.width, height: m.height,
+            bitsPerComponent: 8, bytesPerRow: m.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        return ctx.makeImage()
+    }
 
     // MARK: - Cut list
 
@@ -322,6 +496,8 @@ struct ReviewView: View {
             .padding(.horizontal)
         }
         .frame(maxHeight: 180)
+        .disabled(confirmStage)
+        .opacity(confirmStage ? 0.5 : 1)
     }
 
     private func cutRow(_ cut: CutMeasurement) -> some View {
@@ -420,19 +596,33 @@ struct ReviewView: View {
 
     // MARK: - Footer
 
+    private var canContinue: Bool {
+        guard !flow.effectiveCode.isEmpty else { return false }
+        if flow.scene != nil { return keyConfirmed }
+        return true
+    }
+
     private var footer: some View {
-        HStack {
-            Button("Retake") { flow.retake() }
-            Spacer()
-            Button {
-                flow.step = .result
-            } label: {
-                Text("Continue").frame(minWidth: 100)
+        VStack(spacing: 4) {
+            if flow.scene != nil && !keyConfirmed {
+                Text("Confirm the key location first")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(flow.effectiveCode.isEmpty)
+            HStack {
+                Button("Retake") { flow.retake() }
+                Spacer()
+                Button {
+                    flow.step = .result
+                } label: {
+                    Text("Continue").frame(minWidth: 100)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canContinue)
+            }
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     private var warningTexts: [String] {
@@ -447,6 +637,15 @@ struct ReviewView: View {
             }
         }
     }
+}
+
+// MARK: - Marker handle
+
+private struct ReviewHandle: Identifiable {
+    let id: Int              // -100 shoulder, -101 spine, >= 0 cut index
+    let point: CGPoint       // view space
+    let color: Color
+    let apply: (CGPoint) -> Void
 }
 
 // MARK: - Suggestion chip

@@ -22,6 +22,10 @@ final class DecodeFlow {
     var correctedImage: UIImage?
     var cardDetectionFailed = false
     var statusMessage = ""
+    /// A key (re-)pick is running. The review screen stays on screen with its
+    /// own spinner — leaving .review would tear the view down and its
+    /// pickGeneration observer would miss the result.
+    var isPicking = false
 
     var systems: [KeySystemDefinition] = KeySystemLibrary.bundled
     var systemID = "kw1"
@@ -34,6 +38,32 @@ final class DecodeFlow {
     var manualDigits: [Int] = []
 
     private(set) var scene: MeasurementPipeline.Scene?
+    /// Bumps each time a key (re-)pick finishes — success AND failure both
+    /// change this, which the review screen watches to drive its two-stage
+    /// flow (statusMessage alone can't signal "success" — it may already be "").
+    private(set) var pickGeneration = 0
+
+    /// Bounding box of the whole detected key (bow through tip) in corrected
+    /// image coordinates — the target for "zoom to key".
+    func keyBBox() -> CGRect? {
+        guard let blade = scene?.blade, let params else { return nil }
+        var minX = Double.greatestFiniteMagnitude, minY = minX
+        var maxX = -Double.greatestFiniteMagnitude, maxY = maxX
+        let samples = 24
+        for k in 0...samples {
+            let u = blade.uMin + (blade.uMax - blade.uMin) * Double(k) / Double(samples)
+            let spineV = params.spine.v(at: u)
+            let cutV = blade.cutEdgeV(at: u) ?? spineV + blade.bladeWidthPx
+            for v in [spineV - blade.bladeWidthPx * 1.8, cutV + blade.bladeWidthPx * 0.6] {
+                let p = blade.xy(u: u, v: v)
+                minX = min(minX, Double(p.x)); maxX = max(maxX, Double(p.x))
+                minY = min(minY, Double(p.y)); maxY = max(maxY, Double(p.y))
+            }
+        }
+        guard maxX > minX, maxY > minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            .insetBy(dx: -16, dy: -16)
+    }
 
     var currentSystem: KeySystemDefinition? {
         KeySystemLibrary.system(id: systemID, in: systems)
@@ -145,6 +175,7 @@ final class DecodeFlow {
         params = outcome.result.params
         warnings = outcome.warnings
         systemID = outcome.result.params.systemID
+        statusMessage = ""
         step = .review
     }
 
@@ -177,8 +208,8 @@ final class DecodeFlow {
     /// "That's not my key" fix: re-run the whole pipeline treating the tapped
     /// point as the key blob. Image coordinates = corrected-view pixels.
     func pickKeyRegion(atImagePoint point: CGPoint) {
-        guard let photoCG = photo?.cgImage, let quad, let system = currentSystem else { return }
-        step = .processing
+        guard let photoCG = photo?.cgImage, let quad, let system = currentSystem, !isPicking else { return }
+        isPicking = true
         let seed = CGPoint(x: point.x, y: point.y)
         Task { @MainActor in
             let rebuilt = await Task.detached(priority: .userInitiated) { ()
@@ -207,7 +238,8 @@ final class DecodeFlow {
             }.value
             guard let rebuilt else {
                 statusMessage = "Couldn't find a key region where you tapped — tap directly on the metal."
-                step = .review
+                pickGeneration += 1
+                isPicking = false
                 return
             }
             scene = rebuilt.scene
@@ -219,7 +251,8 @@ final class DecodeFlow {
             warnings = rebuilt.out.warnings
             manualDigits = []
             statusMessage = ""
-            step = .review
+            pickGeneration += 1
+            isPicking = false
         }
     }
 
@@ -300,6 +333,7 @@ final class DecodeFlow {
         manualDigits = []
         cardDetectionFailed = false
         statusMessage = ""
+        isPicking = false
     }
 }
 

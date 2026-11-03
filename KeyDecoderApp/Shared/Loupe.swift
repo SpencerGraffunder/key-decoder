@@ -10,7 +10,7 @@ struct Loupe: View {
     let focus: CGPoint
     /// Mapping of the dragged view so the loupe shows true pixel zoom.
     let fit: ImageFit
-    var size: CGFloat = 132
+    var size: CGFloat = 176
     var zoom: CGFloat = 6
 
     var body: some View {
@@ -26,10 +26,10 @@ struct Loupe: View {
             )
             context.draw(Image(decorative: image, scale: 1), in: rect)
             var cross = Path()
-            cross.move(to: CGPoint(x: center.x - 16, y: center.y))
-            cross.addLine(to: CGPoint(x: center.x + 16, y: center.y))
-            cross.move(to: CGPoint(x: center.x, y: center.y - 16))
-            cross.addLine(to: CGPoint(x: center.x, y: center.y + 16))
+            cross.move(to: CGPoint(x: center.x - 18, y: center.y))
+            cross.addLine(to: CGPoint(x: center.x + 18, y: center.y))
+            cross.move(to: CGPoint(x: center.x, y: center.y - 18))
+            cross.addLine(to: CGPoint(x: center.x, y: center.y + 18))
             context.stroke(cross, with: .color(.red.opacity(0.9)), lineWidth: 1)
             context.fill(
                 Path(ellipseIn: CGRect(x: center.x - 1.5, y: center.y - 1.5, width: 3, height: 3)),
@@ -37,30 +37,32 @@ struct Loupe: View {
             )
         }
         .frame(width: size, height: size)
-        .background(.black.opacity(0.25))
+        .background(.black.opacity(0.30))
         .overlay(Circle().stroke(.white.opacity(0.95), lineWidth: 3))
-        .shadow(color: .black.opacity(0.4), radius: 6, y: 2)
+        .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
         .allowsHitTesting(false)
     }
 }
 
-/// Positions a loupe above (or below, near the top edge) a focus point given
-/// in image coordinates, clamped inside the hosting view.
+/// Positions the loupe ALWAYS directly above the finger (Spec: never below —
+/// below put it under the thumb). Attached OUTSIDE the image container's
+/// clip so the bubble may spill past the photo frame; it is only clamped
+/// enough to stay on screen horizontally and near the top edge.
 struct LoupeOverlay: ViewModifier {
     let image: CGImage?
     let focus: CGPoint?          // image coords
     let fit: ImageFit
     let viewSize: CGSize
+    var loupeSize: CGFloat = 176
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .topLeading) {
             if let image, let focus {
                 let p = fit.toView(focus)
-                let above = p.y > 150
-                Loupe(image: image, focus: focus, fit: fit)
+                Loupe(image: image, focus: focus, fit: fit, size: loupeSize)
                     .position(
-                        x: min(max(p.x, 72), viewSize.width - 72),
-                        y: above ? max(p.y - 118, 76) : min(p.y + 118, viewSize.height - 76)
+                        x: min(max(p.x, loupeSize * 0.40), max(viewSize.width - loupeSize * 0.40, loupeSize * 0.40)),
+                        y: max(p.y - loupeSize / 2 - 28, loupeSize / 2 + 2)
                     )
             }
         }
