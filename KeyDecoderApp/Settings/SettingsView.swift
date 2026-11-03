@@ -75,6 +75,7 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
+                    LabeledContent("Version", value: appVersion)
                     Text(
                         "Key Decoder is free forever: no ads, no accounts, no network. Photos and codes never leave this device."
                     )
@@ -132,6 +133,15 @@ struct SettingsView: View {
         } catch {
             statusMessage = "Import failed: \(error.localizedDescription)"
         }
+    }
+
+    /// CI stamps a rolling version into the bundle (see ios.yml): yy.m.d plus
+    /// the CI run number, so "26.11.2 (18)" pins down exactly which build.
+    private var appVersion: String {
+        let dict = Bundle.main.infoDictionary ?? [:]
+        let short = dict["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = dict["CFBundleVersion"] as? String ?? ""
+        return (build.isEmpty || build == "1") ? short : "\(short) (\(build))"
     }
 }
 

@@ -81,6 +81,13 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      - name: Rolling version (date + run number)
+        run: |
+          # LiveContainer shows CFBundleShortVersionString; a static 1.0 made
+          # every sideloaded build indistinguishable. yy.m.d + CI run number.
+          echo "APP_VERSION=$(date -u +%y.%-m.%-d)" >> "$GITHUB_ENV"
+          echo "APP_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
       - name: Run unit tests (iOS simulator)
         run: |
           SIM=$(xcrun simctl list devices available --json \
@@ -90,6 +97,7 @@ jobs:
           xcodebuild -project KeyDecoder.xcodeproj -scheme KeyDecoder \
             -destination "platform=iOS Simulator,name=$SIM" \
             -derivedDataPath dd-sim \
+            MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$APP_BUILD" \
             CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
             test
 
@@ -99,6 +107,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath dd-device \
+            MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$APP_BUILD" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="-" \
             build
 
