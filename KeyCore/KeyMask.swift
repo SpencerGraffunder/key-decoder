@@ -82,8 +82,22 @@ public enum KeySegmentation {
         // a key (60+) never does.
         var diff = [UInt8](repeating: 0, count: w * h)
         var hist = [Int](repeating: 0, count: 256)
+        // Padded frames: a few-px band around the card rect and the frame
+        // edge holds warp seams and (from corner rounding) table slivers
+        // inside the card rect. Those pixels must leave BOTH the mask and
+        // the threshold histogram — left in, a 1-px sliver at |table - card|
+        // diff ~192 adds a far mode that drags Otsu above the overhanging
+        // key's diff and silently amputates the teeth (probe margin-overhang
+        // caught exactly this).
+        func inBoundaryBand(_ x: Int, _ y: Int) -> Bool {
+            guard padded else { return false }
+            let dCard = min(min(abs(x - cx0), abs(x - cx1)), min(abs(y - cy0), abs(y - cy1)))
+            let dFrame = min(min(x, y), min(w - 1 - x, h - 1 - y))
+            return dCard <= 3 || dFrame <= 3
+        }
         for i in 0..<(w * h) {
             let x = i % w, y = i / w
+            if inBoundaryBand(x, y) { continue }
             let insideCard = x >= cx0 && x < cx1 && y >= cy0 && y < cy1
             let bgHere = padded && !insideCard ? outerInt : bgInt
             let d = abs(Int(image.pixels[i]) - bgHere)
@@ -109,20 +123,6 @@ public enum KeySegmentation {
 
         mask = Morphology.close(mask, w, h, iterations: 2)
         mask = Morphology.open(mask, w, h, iterations: 1)
-        if padded {
-            // Clear a thin band around the card rectangle and the frame edge:
-            // warp seams and hard card/table steps light up as a hairline ring
-            // there, which would otherwise glue a frame-wide outline onto any
-            // key that overhangs the edge and poison bottom-edge sampling.
-            let band = 3
-            for y in 0..<h {
-                for x in 0..<w {
-                    let dCard = min(min(abs(x - cx0), abs(x - cx1)), min(abs(y - cy0), abs(y - cy1)))
-                    let dFrame = min(min(x, y), min(w - 1 - x, h - 1 - y))
-                    if dCard <= band || dFrame <= band { mask[y * w + x] = false }
-                }
-            }
-        }
         ConnectedComponents.detachWeakBridges(&mask, w, h)
 
         // Elongation-aware pick: an on-card ring/fob must not hijack the key;
