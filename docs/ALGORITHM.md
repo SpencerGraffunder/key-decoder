@@ -62,10 +62,10 @@ overhang rescue zone outside the card is a 30 mm band at outerT (an 8 mm
 ring chopped a large bow — 100k px; connectivity can't bridge the 1.5 mm
 excluded boundary band). Blobs touching the frame border are rejected on
 padded picks (glare strips live there).
-Detector knobs are tuned for dark-on-dark: the
-dark metal card on a dark table proved Vision's defaults (contrast 0.3,
-priority 0.5) return NOTHING, so minimumContrastThreshold = 0.08,
-minimumPriority = 0.1, contours contrastAdjustment = 1.0.
+Dark-on-dark sensitivity: the
+dark metal card on a dark table returned NOTHING with stock contour
+settings, so contours contrastAdjustment = 1.0 (rectangle requests expose
+no contrast knob — sensitivity comes from contours + quad scoring + prior).
 CAPTURE-GUIDE PRIOR: capture-time callers map the on-screen guide outline
 (preview-normalized 0.09,0.3205,0.82,0.239 — mirrors the drawn geometry)
 into PHOTO space — an aspect-fill preview shows the 3:4 frame's full height

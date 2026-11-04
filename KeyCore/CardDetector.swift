@@ -30,11 +30,9 @@ public enum CardDetector {
         let rectangles = VNDetectRectanglesRequest()
         rectangles.maximumObservations = 16
         rectangles.minimumSize = 0.12
-        // Defaults (contrast 0.3, priority 0.5) are tuned for documents on
-        // desks: a dark metal card on a dark blue table sits FAR under both,
-        // and the real photos proved Vision returns nothing.
-        rectangles.minimumContrastThreshold = 0.08
-        rectangles.minimumPriority = 0.1
+        // (VNDetectRectanglesRequest exposes no contrast knob; dark-on-dark
+        // sensitivity comes from the contour pass + quad scoring + guide
+        // prior, not from rectangle thresholds.)
         rectangles.minimumAspectRatio = 0.4
         rectangles.quadratureTolerance = 25
         rectangles.minimumConfidence = 0.35
