@@ -491,7 +491,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         for p in cornersFrame.dropFirst() { rect = rect.union(CGRect(origin: p, size: .zero)) }
 
         let fw = CGFloat(cg.width), fh = CGFloat(cg.height)
-        let quadNorm = card.quad.map { CGPoint(x: $0.x / fw, y: $0.y / fh) }
+        let quadNorm = cardQuad.map { CGPoint(x: $0.x / fw, y: $0.y / fh) }
         let keyNorm = CGRect(
             x: rect.minX / fw, y: rect.minY / fh,
             width: rect.width / fw, height: rect.height / fh

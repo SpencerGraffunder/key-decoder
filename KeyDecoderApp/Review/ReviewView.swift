@@ -521,7 +521,7 @@ struct ReviewView: View {
             blade.xy(u: u1, v: vMid + vHalf), blade.xy(u: u0, v: vMid + vHalf),
         ]
         var bbox = CGRect(x: corners[0].x, y: corners[0].y, width: 0, height: 0)
-        for c in corners.dropFirst() { bbox = bbox.union(CGPoint(x: c.x, y: c.y)) }
+        for c in corners.dropFirst() { bbox.formUnion(c) }
         let pix = CGSize(
             width: image.cgImage?.width ?? Int(image.size.width),
             height: image.cgImage?.height ?? Int(image.size.height)
