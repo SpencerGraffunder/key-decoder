@@ -58,9 +58,7 @@ struct CameraSheet: View {
             }
 
             VStack {
-                ZStack(alignment: .top) {
-                    qualityBadge
-                    HStack(spacing: 10) {
+                HStack(spacing: 10) {
                         Spacer()
                         if controller.torchAvailable {
                             Button {
@@ -84,9 +82,8 @@ struct CameraSheet: View {
                                 .background(.black.opacity(0.45), in: Circle())
                         }
                         .accessibilityLabel("Live key finder \(controller.liveHintsEnabled ? "on" : "off")")
-                    }
-                    .padding(.trailing, 6)
                 }
+                .padding(.trailing, 6)
                 .padding(.top, 8)
                 Spacer()
                 Text("Hold the phone UPRIGHT (portrait). Key flat inside the dashed outline, brand side up and readable, BOW (handle) to the LEFT. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
@@ -154,17 +151,6 @@ struct CameraSheet: View {
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
-    }
-
-    private var qualityBadge: some View {
-        let (text, color) = controller.qualityHint
-        return Text(text)
-            .font(.callout.weight(.semibold))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(color.opacity(0.9), in: Capsule())
-            .foregroundStyle(.white)
-            .accessibilityLabel("Capture quality: \(text)")
     }
 
     private var controls: some View {
@@ -319,14 +305,6 @@ final class CameraController: NSObject {
                 device.unlockForConfiguration()
             }
         }
-    }
-
-    var qualityHint: (String, Color) {
-        if brightness < 60 { return ("Too dark — add light", .orange) }
-        if brightness > 225 { return ("Too bright — reduce glare", .orange) }
-        if tiltDegrees > 35 { return ("Too tilted — hold the phone flat over the card", .orange) }
-        if abs(rollDegrees) > 15 { return ("Hold the phone upright (portrait)", .yellow) }
-        return ("Good — hold steady, then capture", .green)
     }
 
     private func configureSession() {
