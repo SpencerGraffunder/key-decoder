@@ -520,8 +520,12 @@ struct ReviewView: View {
             blade.xy(u: u0, v: vMid - vHalf), blade.xy(u: u1, v: vMid - vHalf),
             blade.xy(u: u1, v: vMid + vHalf), blade.xy(u: u0, v: vMid + vHalf),
         ]
-        var bbox = CGRect(x: corners[0].x, y: corners[0].y, width: 0, height: 0)
-        for c in corners.dropFirst() { bbox.formUnion(c) }
+        var loX = corners[0].x, hiX = loX, loY = corners[0].y, hiY = loY
+        for c in corners.dropFirst() {
+            loX = min(loX, c.x); hiX = max(hiX, c.x)
+            loY = min(loY, c.y); hiY = max(hiY, c.y)
+        }
+        let bbox = CGRect(x: loX, y: loY, width: hiX - loX, height: hiY - loY)
         let pix = CGSize(
             width: image.cgImage?.width ?? Int(image.size.width),
             height: image.cgImage?.height ?? Int(image.size.height)
