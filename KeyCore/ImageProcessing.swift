@@ -127,7 +127,7 @@ public enum ConnectedComponents {
         minAreaFraction: Double = 0.015, minAspect: Double = 2.5,
         center: CGPoint? = nil, centerSigma: Double = 0,
         aspectBoost: Double = 0.06, aspectBoostCap: Double = 1.5,
-        elongBoost: Double = 1.0
+        elongBoost: Double = 1.0, rejectBorderTouch: Bool = false
     ) -> ([Bool], Int, Double) {
         let ids = label(mask, w, h)
         guard let ids else {
@@ -136,13 +136,23 @@ public enum ConnectedComponents {
         }
         var counts = [Int: Int](), sx = [Int: Double](), sy = [Int: Double]()
         var sxx = [Int: Double](), syy = [Int: Double](), sxy = [Int: Double]()
+        var bMinX = [Int: Int](), bMaxX = [Int: Int](), bMinY = [Int: Int](), bMaxY = [Int: Int]()
         for i in ids.indices {
             let l = ids[i]
             guard l > 0 else { continue }
-            let x = Double(i % w), y = Double(i / w)
+            let xi = i % w, yi = i / w
+            let x = Double(xi), y = Double(yi)
             counts[l, default: 0] += 1
             sx[l, default: 0] += x; sy[l, default: 0] += y
             sxx[l, default: 0] += x * x; syy[l, default: 0] += y * y; sxy[l, default: 0] += x * y
+            if xi < bMinX[l, default: w] { bMinX[l] = xi }
+            if xi > bMaxX[l, default: -1] { bMaxX[l] = xi }
+            if yi < bMinY[l, default: h] { bMinY[l] = yi }
+            if yi > bMaxY[l, default: -1] { bMaxY[l] = yi }
+        }
+        func touchesBorder(_ l: Int) -> Bool {
+            (bMinX[l] ?? 1) == 0 || (bMaxX[l] ?? -2) == w - 1
+                || (bMinY[l] ?? 1) == 0 || (bMaxY[l] ?? -2) == h - 1
         }
         let minArea = minAreaFraction * Double(w * h)
         // Scored pick: area x mild elongation boost x center proximity (the
@@ -154,6 +164,7 @@ public enum ConnectedComponents {
         var elig = [Cand](), all = [Cand]()
         for (l, n) in counts {
             guard let sxL = sx[l] else { continue }
+            if rejectBorderTouch && touchesBorder(l) { continue }
             let nd = Double(n)
             let mx = sxL / nd, my = sy[l]! / nd
             let cxx = max(sxx[l]! / nd - mx * mx, 0)
@@ -268,7 +279,7 @@ public enum ConnectedComponents {
         return ids
     }
 
-    /// Fill enclosed background (holes): background pixels unreachable from the border.
+/// Fill enclosed background (holes): background pixels unreachable from the border.
     public static func fillHoles(_ mask: [Bool], _ w: Int, _ h: Int) -> [Bool] {
         var outside = [Bool](repeating: false, count: mask.count)
         var stack = [Int]()
@@ -288,5 +299,96 @@ public enum ConnectedComponents {
             if y < h - 1 { push(i + w) }
         }
         return zip(mask, outside).map { $0 || !$1 }
+    }
+}
+
+/// Background estimate that FOLLOWS slow luminance gradients: a MEDIAN
+/// field over the card rect, bilinearly upsampled. A brushed-metal card runs
+/// 50\u2192250 across its face (field photo confirmed), so any single-median
+/// background is wrong by \u00b160 levels locally while a key sits at 20\u201360
+/// contrast. The filter must be a MEDIAN, not a mean: a mean window
+/// (even \u00b1 30 mm) absorbs the key itself and ghosts the object's own
+/// shape into the subtraction; a median survives windows up to half-filled
+/// with the object and cancels gradients exactly. Radius 30 mm: larger than
+/// blade+teeth structure, smaller than the card's gradient wavelength. Flat
+/// cards reduce to a constant field (behavior unchanged). Cost: median on a
+/// \u2264 150-cell grid (256-bin sliding histograms), then bilinear upsample.
+public enum LocalBackground {
+    public static func field(
+        _ image: GrayImage, rect: CGRect, radiusMm: Double, pixelsPerMm: Double
+    ) -> [UInt8] {
+        let w = image.width, h = image.height
+        let x0 = max(0, Int(rect.minX.rounded())), y0 = max(0, Int(rect.minY.rounded()))
+        let x1 = min(w, Int(rect.maxX.rounded())), y1 = min(h, Int(rect.maxY.rounded()))
+        let cw = max(1, x1 - x0), ch = max(1, y1 - y0)
+        // Downsample to a <=150-cell grid (block means).
+        let f = max(4, cw / 150)
+        let dw = max(2, cw / f), dh = max(2, ch / f)
+        var small = [Double](repeating: 0, count: dw * dh)
+        var cnt = [Int](repeating: 0, count: dw * dh)
+        for y in y0..<y1 {
+            let dy = min(dh - 1, (y - y0) / f)
+            for x in x0..<x1 {
+                let dx = min(dw - 1, (x - x0) / f)
+                let i = dy * dw + dx
+                small[i] += Double(image.pixels[y * w + x])
+                cnt[i] += 1
+            }
+        }
+        var cells = [UInt8](repeating: 0, count: dw * dh)
+        for i in small.indices where cnt[i] > 0 {
+            cells[i] = UInt8(max(0, min(255, (small[i] / Double(cnt[i])).rounded())))
+        }
+        // Sliding median (256-bin histogram, clamped window), separable.
+        let r = max(1, Int((radiusMm * pixelsPerMm / Double(f)).rounded()))
+        func medScan(_ hist: inout [Int], _ total: Int) -> Double {
+            var cum = 0
+            for v in 0..<256 {
+                cum += hist[v]
+                if cum * 2 >= total { return Double(v) }
+            }
+            return Double(hist.lastIndex(where: { $0 > 0 }) ?? 0)
+        }
+        func pass(_ a: [UInt8], horizontal: Bool) -> [Double] {
+            var out = [Double](repeating: 0, count: a.count)
+            let outer = horizontal ? dh : dw
+            let inner = horizontal ? dw : dh
+            func at(_ o: Int, _ i: Int) -> Int { Int(a[horizontal ? o * dw + i : i * dw + o]) }
+            for o in 0..<outer {
+                var hist = [Int](repeating: 0, count: 256)
+                var total = 0
+                func add(_ i: Int) { hist[at(o, i)] += 1; total += 1 }
+                func remove(_ i: Int) { hist[at(o, i)] -= 1; total -= 1 }
+                for i in 0...min(r, inner - 1) { add(i) }
+                for i in 0..<inner {
+                    let m = medScan(&hist, total)
+                    if horizontal { out[o * dw + i] = m } else { out[i * dw + o] = m }
+                    if i + r + 1 < inner { add(i + r + 1) }
+                    if i - r >= 0 { remove(i - r) }
+                }
+            }
+            return out
+        }
+        let hmed = pass(cells, horizontal: true)
+        let hm = hmed.map { UInt8(max(0, min(255, $0.rounded()))) }
+        let vmed = pass(hm, horizontal: false)
+        // Bilinear upsample back over the full image frame.
+        var out = [UInt8](repeating: 0, count: w * h)
+        for y in y0..<y1 {
+            let fy = min(Double(dh - 1), Double(y - y0) / Double(f))
+            let sy = Int(fy.rounded(.down)), ty = fy - Double(sy)
+            let sy1 = min(dh - 1, sy + 1)
+            for x in x0..<x1 {
+                let fx = min(Double(dw - 1), Double(x - x0) / Double(f))
+                let sx = Int(fx.rounded(.down)), tx = fx - Double(sx)
+                let sx1 = min(dw - 1, sx + 1)
+                let a = vmed[sy * dw + sx], b = vmed[sy * dw + sx1]
+                let c = vmed[sy1 * dw + sx], d = vmed[sy1 * dw + sx1]
+                let top = a + (b - a) * tx
+                let v = top + ((c + (d - c) * tx) - top) * ty
+                out[y * w + x] = UInt8(max(0, min(255, v.rounded())))
+            }
+        }
+        return out
     }
 }

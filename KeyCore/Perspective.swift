@@ -13,6 +13,10 @@ public enum Perspective {
         Int((Double(width) * 53.98 / 85.60).rounded())
     }
 
+    /// The padded-warp margin (single source of truth: correct(), the
+    /// finder overlay, and the test mirrors all take it from here).
+    public static let marginFrac = 0.16
+
     public static func pixelsPerMm(forWidth width: Int = defaultOutputWidth) -> Double {
         Double(width) / 85.60
     }

@@ -96,8 +96,9 @@ final class DecodeFlow {
     }
 
     private func detectCard(in cg: CGImage) async {
+        let guide = CaptureGuide.photoRect(previewAspect: CaptureController.lastPreviewAspect)
         let found = await Task.detached(priority: .userInitiated) {
-            CardDetector.detect(in: cg, prior: CaptureGuide.rect)
+            CardDetector.detect(in: cg, prior: guide)
         }.value
         if let d = found, d.confident {
             // Always route through the corner editor (Spec: auto-skip jumped
@@ -116,8 +117,32 @@ final class DecodeFlow {
             cardDetectionFailed = false
             step = .cardEditor
         } else {
-            quad = nil
+            // Nothing found (a dark metal card on a dark table defeats even
+            // relaxed Vision). The user was told to line the card up with
+            // the guide outline — so scan a vertical band around it and run
+            // the real pipeline at each offset: seed the editor where a
+            // key-sized blob actually segments. Composition drift is the
+            // norm, so a blind guide seed is only the last resort.
+            let size = CGSize(width: cg.width, height: cg.height)
+            var bestQuad: [CGPoint]?
+            var bestScore = 1.4  // below this the guide default is just as good
+            for dy in [-0.20, -0.10, 0.0, 0.10, 0.20] {
+                let r = guide.offsetBy(dx: 0, dy: CGFloat(dy))
+                guard r.minY >= 0, r.maxY <= 1 else { continue }
+                let q = CaptureGuide.quad(in: size, normalized: r)
+                let score = await Task.detached(priority: .userInitiated) {
+                    MeasurementPipeline.keyScore(photo: cg, quad: q)
+                }.value
+                if let score, score > bestScore {
+                    bestScore = score
+                    bestQuad = q
+                }
+            }
+            quad = bestQuad ?? CaptureGuide.quad(in: size, normalized: guide)
             cardDetectionFailed = true
+            statusMessage = bestQuad != nil
+                ? "Card not found — corners placed where the key shape appeared. Check the rings, then Use card."
+                : "Card not found — corners set where the guide outline was. Check the rings, then Use card."
             step = .cardEditor
         }
     }

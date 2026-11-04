@@ -201,6 +201,11 @@ final class CameraController: NSObject {
     var liveKeyRect: CGRect?
 
     @ObservationIgnored fileprivate weak var previewLayer: AVCaptureVideoPreviewLayer?
+
+    /// Preview bounds aspect (w/h), kept current by updateUIView — the guide
+    /// outline lives in preview space but detection needs it in PHOTO space
+    /// (aspect-fill crops the 3:4 frame's width). Read by DecodeFlow.
+    static var lastPreviewAspect: CGFloat = 0.462
     @ObservationIgnored private var captureDevice: AVCaptureDevice?
     @ObservationIgnored private var focusSeq = 0
     @ObservationIgnored private var frameIndex = 0
@@ -437,9 +442,16 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         // NOTHING the guide rect stands in as the quad: the user was told to
         // line the card up with it, so measuring there beats showing nothing
         // (a dark card on a dark table was silencing the overlay entirely).
-        let det = CardDetector.detect(in: cg, prior: CaptureGuide.rect)
+        // The live buffer is the LANDSCAPE video frame; the composed card
+        // sits near its center for either grip, and the guide prior's sigma
+        // is forgiving — a center blob in this space serves as both prior
+        // and fallback quad without chasing orientation math. (Cosmetic
+        // overlay: near-correct beats never-shown, and real detections
+        // replace it whenever Vision sees the card.)
+        let guideNorm = CGRect(x: 0.26, y: 0.20, width: 0.48, height: 0.60)
+        let det = CardDetector.detect(in: cg, prior: guideNorm)
         guard let gray = GrayImage(cgImage: cg) else { return nil }
-        let cardQuad = det?.quad ?? CaptureGuide.quad(in: CGSize(width: cg.width, height: cg.height))
+        let cardQuad = det?.quad ?? CaptureGuide.quad(in: CGSize(width: cg.width, height: cg.height), normalized: guideNorm)
 
         // Warp to the same normalized card view the decoder uses, then run
         // the real segmentation — the overlay shows what the app WOULD read.
@@ -517,6 +529,9 @@ struct CameraPreview: UIViewRepresentable {
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
         controller.previewLayer = uiView.previewLayer
+        if uiView.bounds.height > 0 {
+            CaptureController.lastPreviewAspect = uiView.bounds.width / uiView.bounds.height
+        }
     }
 
     final class PreviewView: UIView {

@@ -46,15 +46,40 @@ each quad side (max within ±4 px of the side normal), keep per-side minima,
 average the middle two — confident picks need >= 25 (suggestion tier >= 10),
 both gates scaled by min(w,h)/620 clamped to [0.45, 1] so low-resolution live
 frames keep a working finder. So flat-background hallucination quads from
-Vision lose to real edges. CAPTURE-GUIDE PRIOR: capture-time callers pass the
-guide rect (normalized 0.09,0.30,0.82,0.28); candidate scores are multiplied
-by max(0.15, exp(−1.2 d²/σ²)) where d is centroid distance to the guide
-center — the card near the guide outranks strong-edge clutter. The live key
-finder additionally falls back to the guide rect as quad when Vision finds
-nothing (dark card on dark table), so the overlay survives that failure. User
-quads from the editor skip sanity gates but get a one-tap aspect warning.
-Failing detection → manual path; a confident detection still lands in the
-corner editor with the corners pre-seeded (no silent auto-skip).
+Vision lose to real edges. GRADIENT-CARD SEGMENTATION: brushed-metal cards
+(field photo: 50→250 across the face) trip an object-immune gradient probe
+(median-of-row-medians top-vs-bottom and left-vs-right > max(24, 2.5σ)); on
+such frames the card background becomes a MEDIAN FIELD (LocalBackground:
+30 mm sliding-median on a ≤150-cell grid, bilinearly upsampled — a MEAN
+would absorb the key and ghost its shape) and masking switches to
+HYSTERESIS WITH GROWTH CAP: pixels above a 2.2σ weak threshold survive only
+within 5 px of a strong (Otsu) pixel, so specular stripes / contact-gap
+rings paint low-contrast key bodies while cast shadows (broad weak regions
+adjacent to the key) cannot piggyback; floor softens to 2.0σ (8–45). FLAT
+frames run the v3b single-threshold path verbatim — hysteresis' AA growth
+measurably shifted tooth bottoms a full depth digit on synthetic keys. The
+overhang rescue zone outside the card is a 30 mm band at outerT (an 8 mm
+ring chopped a large bow — 100k px; connectivity can't bridge the 1.5 mm
+excluded boundary band). Blobs touching the frame border are rejected on
+padded picks (glare strips live there).
+Detector knobs are tuned for dark-on-dark: the
+dark metal card on a dark table proved Vision's defaults (contrast 0.3,
+priority 0.5) return NOTHING, so minimumContrastThreshold = 0.08,
+minimumPriority = 0.1, contours contrastAdjustment = 1.0.
+CAPTURE-GUIDE PRIOR: capture-time callers map the on-screen guide outline
+(preview-normalized 0.09,0.3205,0.82,0.239 — mirrors the drawn geometry)
+into PHOTO space — an aspect-fill preview shows the 3:4 frame's full height
+and only previewAspect/0.75 of its width — and multiply candidate scores by
+max(0.15, exp(−1.2 d²/σ²)), d = centroid distance to the mapped guide
+center: the card near the guide outranks strong-edge clutter. GUIDE-SCAN
+FALLBACK: when detection still finds nothing (the dark-card case), the app
+runs the real pipeline (keyScore: correct + analyzeScene + blob-size and
+spine-quality terms) at guide offsets dy ∈ {±20%, ±10%, 0} and seeds the
+corner editor where a key-sized blob actually segments; the plain mapped
+guide quad is last resort. The live finder uses a center-blob prior/fallback
+in landscape-buffer space (orientation-robust; cosmetic overlay). User quads
+from the editor skip sanity gates but get a one-tap aspect warning. Even a
+confident detection lands in the corner editor pre-seeded (no auto-skip).
 
 ### 2. Key mask (on the corrected image, v3)
 Legacy unpadded frames (m = 0) follow steps 1–7 with the SINGLE card-face

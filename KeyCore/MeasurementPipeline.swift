@@ -44,7 +44,7 @@ public enum MeasurementPipeline {
     #if canImport(CoreGraphics)
     public static func correct(
         photo: CGImage, quad: [CGPoint], outputWidth: Int = Perspective.defaultOutputWidth,
-        marginFrac: Double = 0.16
+        marginFrac: Double = Perspective.marginFrac
     ) -> (gray: GrayImage, color: RGBAImage, pixelsPerMm: Double, marginFrac: Double)? {
         let height = Perspective.outputHeight(forWidth: outputWidth)
         // Never pad past the photo: the caller's marginFrac is an upper
@@ -71,6 +71,25 @@ public enum MeasurementPipeline {
     /// Clamp helper for callers that hold a quad + source size (CG-free core).
     public static func clampedMargin(_ photoSize: CGSize, quad: [CGPoint], requested: Double) -> Double {
         Perspective.clampedMarginFrac(requested, quad: quad, imageSize: photoSize)
+    }
+
+    /// "Is there a decodable key inside this quad?" — the guide-scan
+    /// fallback runs it over a band of guide-offset quads when Vision found
+    /// nothing (dark card on dark table), and seeds the corner editor where
+    /// the pipeline actually segments a key-sized blob. Cost is a full
+    /// correct+analyze per quad (~0.5 s); it runs only after failed
+    /// detection. Higher = more key-like; nil = nothing segmented at all.
+    public static func keyScore(photo: CGImage, quad: [CGPoint]) -> Double? {
+        guard let c = correct(photo: photo, quad: quad),
+              let scene = analyzeScene(corrected: c.gray, pixelsPerMm: c.pixelsPerMm, marginFrac: c.marginFrac)
+        else { return nil }
+        let f = scene.mask.blobAreaFraction
+        guard f >= 0.012 else { return nil }
+        // 1.0 for a key-sized blob (a hair over the 3% typical), decaying
+        // for specks and card-face-sized gluts; + clean-spine bonus.
+        var s = 2.0 * exp(-abs(f - 0.032) / 0.030)
+        s += max(0.0, 1.0 - scene.blade.spineRms / 6.0)
+        return s
     }
     #endif
 

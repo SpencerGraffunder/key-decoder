@@ -30,6 +30,11 @@ public enum CardDetector {
         let rectangles = VNDetectRectanglesRequest()
         rectangles.maximumObservations = 16
         rectangles.minimumSize = 0.12
+        // Defaults (contrast 0.3, priority 0.5) are tuned for documents on
+        // desks: a dark metal card on a dark blue table sits FAR under both,
+        // and the real photos proved Vision returns nothing.
+        rectangles.minimumContrastThreshold = 0.08
+        rectangles.minimumPriority = 0.1
         rectangles.minimumAspectRatio = 0.4
         rectangles.quadratureTolerance = 25
         rectangles.minimumConfidence = 0.35
@@ -39,7 +44,7 @@ public enum CardDetector {
         // filtering happens on the extracted bounding quads instead, and
         // CardQuality gates are the real arbiter.
         let contours = VNDetectContoursRequest()
-        contours.contrastAdjustment = 1.7
+        contours.contrastAdjustment = 1.0
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do { try handler.perform([rectangles, contours]) } catch { return nil }
@@ -277,17 +282,38 @@ import Vision
 /// the live finder treat it as a strong prior — the user is told to line the
 /// card up with it, so the card IS there until proven otherwise.
 public enum CaptureGuide {
-    public static let rect = CGRect(x: 0.09, y: 0.30, width: 0.82, height: 0.28)
+    /// The dashed outline in PREVIEW-normalized space (y-down). Mirrors the
+    /// CameraSheet drawing EXACTLY: width 0.82 of the view, card aspect
+    /// 85.60/53.98, centered at y = 0.44.
+    public static let previewRect = CGRect(x: 0.09, y: 0.3205, width: 0.82, height: 0.239)
 
-    /// Guide corners as a TL,TR,BR,BL pixel quad in an image of `size`.
-    public static func quad(in size: CGSize) -> [CGPoint] {
-        let pts = [
+    /// The guide in PHOTO-normalized space. An aspect-fill preview of a 3:4
+    /// portrait photo shows the frame's full HEIGHT and only
+    /// previewAspect/photoAspect of its WIDTH (~0.616 on a 13 mini), so
+    /// preview-x shrinks toward the center while y carries over. Mapping
+    /// through this keeps the quad's aspect 1.59 instead of the blind
+    /// 2.2:1 it degenerates to otherwise.
+    public static func photoRect(previewAspect: CGFloat) -> CGRect {
+        let photoAspect: CGFloat = 3.0 / 4.0
+        let xf = min(1.0, previewAspect / photoAspect)
+        return CGRect(
+            x: 0.5 - previewRect.width * xf / 2,
+            y: previewRect.minY,
+            width: previewRect.width * xf,
+            height: previewRect.height
+        )
+    }
+
+    /// Guide corners as a TL,TR,BR,BL pixel quad for a `rect` in
+    /// normalized y-down space of an image of `size` (already ordered by
+    /// construction: w > h).
+    public static func quad(in size: CGSize, normalized rect: CGRect) -> [CGPoint] {
+        [
             CGPoint(x: rect.minX * size.width, y: rect.minY * size.height),
             CGPoint(x: rect.maxX * size.width, y: rect.minY * size.height),
             CGPoint(x: rect.maxX * size.width, y: rect.maxY * size.height),
             CGPoint(x: rect.minX * size.width, y: rect.maxY * size.height),
         ]
-        return QuadOrdering.order(pts) ?? pts
     }
 }
 
