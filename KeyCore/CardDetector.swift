@@ -26,7 +26,7 @@ public enum CardDetector {
     /// contour bounding quads are pooled as normalized quads, the strict gate
     /// tries first, then the relaxed suggestion gate. A suggestion is never
     /// auto-applied.
-    public static func detect(in image: CGImage) -> CardDetection? {
+    public static func detect(in image: CGImage, prior: CGRect? = nil) -> CardDetection? {
         let rectangles = VNDetectRectanglesRequest()
         rectangles.maximumObservations = 16
         rectangles.minimumSize = 0.12
@@ -58,6 +58,12 @@ public enum CardDetector {
         // edge under them; real cards keep all four even under partial glare
         // (we take the middle two of the four per-side minima).
         let grayFull = GrayImage(cgImage: image)
+        // Boundary gates scale with resolution: a 640 px live frame has
+        // proportionally softer edges than a 12 MP still, and the still-tuned
+        // threshold would silence the finder overlay entirely.
+        let edgeScale = min(1.0, max(0.45, Double(min(image.width, image.height)) / 620.0))
+        let strictMin = 25.0 * edgeScale
+        let suggestMin = 10.0 * edgeScale
         func scoredPick(strict: Bool) -> [CGPoint]? {
             let imageArea = Double(image.width * image.height)
             var bestQuad: [CGPoint]?
@@ -72,10 +78,11 @@ public enum CardDetector {
                 var score = CardQuality.score(quad, imageArea: imageArea)
                 if let g = grayFull {
                     let b = boundaryStrength(g, quad: quad)
-                    if strict, b < 25 { continue }
-                    if !strict, b < 10 { continue }
+                    if strict, b < strictMin { continue }
+                    if !strict, b < suggestMin { continue }
                     score *= 1.0 + b / 100.0
                 }
+                score *= priorBoost(quad: quad, prior: prior, imageSize: CGSize(width: image.width, height: image.height))
                 if score > bestScore { bestScore = score; bestQuad = quad }
             }
             return bestQuad
@@ -125,6 +132,22 @@ public enum CardDetector {
         }
         sideMin.sort()
         return (sideMin[1] + sideMin[2]) / 2
+    }
+
+    /// The capture UI guides the card to a fixed spot; when the caller passes
+    /// that guide rect (normalized, y-down), candidates near it win and ones
+    /// far away (clutter with strong edges — bins, tablets, shadows) lose.
+    /// 1.0 at the guide center, floored at 0.15 so detection far off the
+    /// guide (photos from the library!) is not impossible.
+    public static func priorBoost(quad: [CGPoint], prior: CGRect?, imageSize: CGSize) -> Double {
+        guard let prior, prior.width > 0, prior.height > 0 else { return 1.0 }
+        let cx = quad.reduce(0) { $0 + $1.x } / 4 / imageSize.width
+        let cy = quad.reduce(0) { $0 + $1.y } / 4 / imageSize.height
+        let px = (prior.minX + prior.maxX) / 2, py = (prior.minY + prior.maxY) / 2
+        let dx = cx - px, dy = cy - py
+        let sigma = max(0.18, hypot(prior.width, prior.height) * 0.9)
+        let d2 = (dx * dx + dy * dy) / (sigma * sigma)
+        return max(0.15, exp(-d2 * 1.2))
     }
 
     /// Axis-aligned bounding quad per contour subpath of the observation's
@@ -249,6 +272,24 @@ public enum CardDetector {
 
 #if canImport(Vision)
 import Vision
+
+/// The capture UI's dashed card guide, normalized (y-down). Detection and
+/// the live finder treat it as a strong prior — the user is told to line the
+/// card up with it, so the card IS there until proven otherwise.
+public enum CaptureGuide {
+    public static let rect = CGRect(x: 0.09, y: 0.30, width: 0.82, height: 0.28)
+
+    /// Guide corners as a TL,TR,BR,BL pixel quad in an image of `size`.
+    public static func quad(in size: CGSize) -> [CGPoint] {
+        let pts = [
+            CGPoint(x: rect.minX * size.width, y: rect.minY * size.height),
+            CGPoint(x: rect.maxX * size.width, y: rect.minY * size.height),
+            CGPoint(x: rect.maxX * size.width, y: rect.maxY * size.height),
+            CGPoint(x: rect.minX * size.width, y: rect.maxY * size.height),
+        ]
+        return QuadOrdering.order(pts) ?? pts
+    }
+}
 
 /// Reads engraved/stamped bow text (brand + code) from the corrected card
 /// view. Advisory only — feeds SystemSuggester.applyStamp, never final.

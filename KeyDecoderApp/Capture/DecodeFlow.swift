@@ -97,7 +97,7 @@ final class DecodeFlow {
 
     private func detectCard(in cg: CGImage) async {
         let found = await Task.detached(priority: .userInitiated) {
-            CardDetector.detect(in: cg)
+            CardDetector.detect(in: cg, prior: CaptureGuide.rect)
         }.value
         if let d = found, d.confident {
             // Always route through the corner editor (Spec: auto-skip jumped
@@ -141,7 +141,7 @@ final class DecodeFlow {
             guard let corrected = MeasurementPipeline.correct(photo: cg, quad: quad),
                   let scene = MeasurementPipeline.analyzeScene(
                     corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm,
-                    marginFrac: 0.16
+                    marginFrac: corrected.marginFrac
                   )
             else { return nil }
             var suggestions = SystemSuggester.suggest(
@@ -230,7 +230,7 @@ final class DecodeFlow {
                 guard let corrected = MeasurementPipeline.correct(photo: photoCG, quad: quad),
                       let scene = MeasurementPipeline.analyzeScene(
                           corrected: corrected.gray, pixelsPerMm: corrected.pixelsPerMm, seed: seed,
-                          marginFrac: 0.16
+                          marginFrac: corrected.marginFrac
                       )
                 else { return nil }
                 var suggestions = SystemSuggester.suggest(

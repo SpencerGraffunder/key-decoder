@@ -218,6 +218,74 @@ final class SyntheticKeyTests: XCTestCase {
         return MeasurementPipeline.measure(scene: scene, system: system)
     }
 
+
+    /// Same scene as `decode`, through the padded (v3) pipeline: the warp
+    /// quad is expanded first so the corrected frame carries a photo ring,
+    /// and the card (inset ~8 mm in `photoQuad`) overhangs that ring edge —
+    /// mirrors the Linux probe's runPadded scenarios, including the table
+    /// sliver that once dragged Otsu above the overhang contrast.
+    private func decodePadded(
+        system: KeySystemDefinition, code: [Int], style: SceneStyle, seed: UInt64,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> MeasurementPipeline.Output? {
+        var rng = SeededRNG(seed: seed)
+        let card = renderCard(system: system, code: code, style: style, rng: &rng)
+        let scale = CGFloat(style.photoDownscale)
+        let canvas = CGSize(width: (3400 * scale).rounded(), height: (2400 * scale).rounded())
+        let quad = photoQuad(canvas: canvas, rng: &rng)
+        let photo = warpToPhoto(card, quad: quad, canvas: canvas, style: style, rng: &rng)
+        let m = Perspective.clampedMarginFrac(
+            Perspective.marginFrac, quad: quad,
+            imageSize: CGSize(width: photo.width, height: photo.height)
+        )
+        guard let expanded = m > 0 ? Perspective.expandedQuad(quad, marginFrac: m) : quad,
+              let warped = Perspective.warpGray(photo, quad: expanded),
+              let scene = MeasurementPipeline.analyzeScene(
+                  corrected: warped.image,
+                  pixelsPerMm: Perspective.pixelsPerMm(forWidth: warped.image.width, marginFrac: m),
+                  marginFrac: m
+              )
+        else {
+            XCTFail("padded pipeline could not segment the synthetic key", file: file, line: line)
+            return nil
+        }
+        return MeasurementPipeline.measure(scene: scene, system: system)
+    }
+
+    // MARK: - Padded (v3) mirrors of the probe scenarios
+
+    func testPaddedCleanDecodesExactly() throws {
+        let kw1 = try system("kw1")
+        for (index, code) in [[2, 3, 4, 5, 6], [1, 1, 1, 1, 1], [6, 6, 3, 2, 1]].enumerated() {
+            let out = try XCTUnwrap(
+                decodePadded(system: kw1, code: code, style: SceneStyle(), seed: 2000 + UInt64(index))
+            )
+            XCTAssertEqual(out.result.cuts.map(\.digit), code, "padded code \(code) → \(out.result.codeString)")
+        }
+    }
+
+    func testPaddedGradientShadowDecodesClean() throws {
+        let kw1 = try system("kw1")
+        let out = try XCTUnwrap(
+            decodePadded(system: kw1, code: [2, 3, 4, 5, 6],
+                         style: SceneStyle(gradient: 70, shadowBand: true), seed: 2010)
+        )
+        XCTAssertEqual(out.result.cuts.map(\.digit), [2, 3, 4, 5, 6])
+    }
+
+    func testPaddedLowResStillMostlyCorrect() throws {
+        let kw1 = try system("kw1")
+        var correct = 0
+        for (index, code) in [[4, 1, 6, 2, 5], [3, 3, 3, 3, 3]].enumerated() {
+            let out = try XCTUnwrap(
+                decodePadded(system: kw1, code: code,
+                             style: SceneStyle(photoDownscale: 0.25), seed: 2020 + UInt64(index))
+            )
+            correct += zip(out.result.cuts.map(\.digit), code).filter { $0.0 == $0.1 }.count
+        }
+        XCTAssertGreaterThanOrEqual(correct, 8)
+    }
+
     // MARK: - Tests
 
     private func system(_ id: String) throws -> KeySystemDefinition {

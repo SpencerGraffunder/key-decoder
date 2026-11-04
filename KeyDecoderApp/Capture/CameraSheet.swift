@@ -430,18 +430,27 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
         let ci = CIImage(cvPixelBuffer: pixelBuffer)
         guard ci.extent.width > 0 else { return nil }
-        let scale = 400.0 / ci.extent.width
+        let scale = 640.0 / ci.extent.width
         let small = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         guard let cg = ciContext.createCGImage(small, from: small.extent) else { return nil }
-        guard let card = CardDetector.detect(in: cg), card.confident,
-              let gray = GrayImage(cgImage: cg) else { return nil }
+        // Either detection tier works for the finder, and when Vision finds
+        // NOTHING the guide rect stands in as the quad: the user was told to
+        // line the card up with it, so measuring there beats showing nothing
+        // (a dark card on a dark table was silencing the overlay entirely).
+        let det = CardDetector.detect(in: cg, prior: CaptureGuide.rect)
+        guard let gray = GrayImage(cgImage: cg) else { return nil }
+        let cardQuad = det?.quad ?? CaptureGuide.quad(in: CGSize(width: cg.width, height: cg.height))
 
         // Warp to the same normalized card view the decoder uses, then run
         // the real segmentation — the overlay shows what the app WOULD read.
         let wC = 700
         let hC = Perspective.outputHeight(forWidth: wC)
-        let marginFrac = 0.16
-        let sourceQuad = Perspective.expandedQuad(card.quad, marginFrac: marginFrac) ?? card.quad
+        let marginFrac = Perspective.clampedMarginFrac(
+            0.16, quad: cardQuad, imageSize: CGSize(width: cg.width, height: cg.height)
+        )
+        let sourceQuad = marginFrac > 0
+            ? (Perspective.expandedQuad(cardQuad, marginFrac: marginFrac) ?? cardQuad)
+            : cardQuad
         guard let warped = Perspective.warpGray(
             gray, quad: sourceQuad, outputWidth: wC, outputHeight: hC
         ), let scene = MeasurementPipeline.analyzeScene(

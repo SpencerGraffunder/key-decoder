@@ -126,7 +126,8 @@ public enum ConnectedComponents {
         _ mask: [Bool], _ w: Int, _ h: Int,
         minAreaFraction: Double = 0.015, minAspect: Double = 2.5,
         center: CGPoint? = nil, centerSigma: Double = 0,
-        aspectBoost: Double = 0.06, aspectBoostCap: Double = 1.5
+        aspectBoost: Double = 0.06, aspectBoostCap: Double = 1.5,
+        elongBoost: Double = 1.0
     ) -> ([Bool], Int, Double) {
         let ids = label(mask, w, h)
         guard let ids else {
@@ -171,7 +172,13 @@ public enum ConnectedComponents {
             } else {
                 centerBoost = 1.0
             }
-            let score = nd * (1.0 + min(aspectBoostCap, max(0, aspect - 2.5) * aspectBoost)) * centerBoost
+            // elongBoost < 1 (padded frames): shape becomes a tie-breaker
+            // and center proximity is squared — a seam ring hugging the card
+            // edge is long, thin AND off-center, exactly the failure mode of
+            // shape-dominant scoring when the key itself sits at the center.
+            let shapeFactor = pow(1.0 + min(aspectBoostCap, max(0, aspect - 2.5) * aspectBoost), elongBoost)
+            let centerFactor = elongBoost < 1 ? centerBoost * centerBoost : centerBoost
+            let score = nd * shapeFactor * centerFactor
             let cand = Cand(l: l, n: n, aspect: aspect, score: score)
             all.append(cand)
             if nd >= minArea, aspect >= minAspect { elig.append(cand) }

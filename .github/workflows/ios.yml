@@ -96,7 +96,11 @@ jobs:
                 | jq -r '.devices[] | .[] | select(.name | contains("iPhone")) | .name' \
                 | head -1)
           echo "Using simulator: $SIM"
+          # Release, not Debug: the synthetic CV fixtures decode real-size
+          # scenes and Debug pixel loops overrun xcodebuild's per-test
+          # watchdog; its preempt-restart loop loses the whole suite.
           xcodebuild -project KeyDecoder.xcodeproj -scheme KeyDecoder \
+            -configuration Release \
             -destination "platform=iOS Simulator,name=$SIM" \
             -derivedDataPath dd-sim \
             MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$APP_BUILD" \

@@ -30,6 +30,27 @@ public enum Perspective {
     /// the surroundings (`marginFrac` per side). A key hanging off the card
     /// edge keeps its overhanging teeth in the corrected view instead of at
     /// the warp boundary. Degenerate quads return nil.
+    /// Largest padding whose expanded quad still fits inside the source
+    /// image. MUST be applied before padding: sampling beyond the photo
+    /// clamps to smeared edge rows, and when those look card-colored the
+    /// "photo ring" background turns into card face — overhang contrast
+    /// silently drops to zero (margin-overhang probe catches this).
+    /// Returns 0 for a card that fills the frame, which routes the whole
+    /// pipeline through its legacy unpadded path.
+    public static func clampedMarginFrac(_ marginFrac: Double, quad: [CGPoint], imageSize: CGSize) -> Double {
+        guard quad.count == 4, marginFrac > 0 else { return 0 }
+        let cx = quad.reduce(0) { $0 + $1.x } / 4
+        let cy = quad.reduce(0) { $0 + $1.y } / 4
+        var k = 1.0 / (1.0 - 2.0 * marginFrac)
+        for q in quad {
+            let dx = q.x - cx, dy = q.y - cy
+            if abs(dx) > 1e-9 { k = min(k, (dx > 0 ? Double(imageSize.width) - cx : cx) / abs(dx)) }
+            if abs(dy) > 1e-9 { k = min(k, (dy > 0 ? Double(imageSize.height) - cy : cy) / abs(dy)) }
+        }
+        k = max(1.0, min(k, 1.0 / (1.0 - 2.0 * marginFrac)))
+        return (k - 1.0) / (2.0 * k)
+    }
+
     public static func expandedQuad(_ quad: [CGPoint], marginFrac: Double) -> [CGPoint]? {
         guard quad.count == 4, marginFrac > 0 else { return nil }
         let cx = quad.reduce(0) { $0 + $1.x } / 4

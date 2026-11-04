@@ -25,6 +25,8 @@ struct CardQuadEditorView: View {
     @State private var dragPoint: CGPoint?
     @State private var quadWarning: String?
     private static let dragLift: CGFloat = 70
+    @State private var pinchBase: CGFloat?
+    @State private var pinching = false
 
     @State private var zoom: CGFloat = 1
     @State private var center: CGPoint?
@@ -94,6 +96,15 @@ struct CardQuadEditorView: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(dragGesture(fit: fit, handles: quad.map(fit.toView)))
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .onChanged { value in
+                            if pinchBase == nil { pinchBase = zoom; panStart = nil; didPan = false }
+                            pinching = true
+                            zoom = min(max(1, (pinchBase ?? zoom) * value.magnification), 8)
+                        }
+                        .onEnded { _ in pinchBase = nil; pinching = false }
+                )
                 .onTapGesture(count: 2) { toggleZoom() }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 // Outside the clip: the bubble is allowed to spill over the frame.
@@ -181,7 +192,7 @@ struct CardQuadEditorView: View {
 
     /// Nearest corner within 44 pt wins; a touch far from every ring pans.
     private func grabIfNeeded(start: CGPoint, fit: ImageFit, handles: [CGPoint]) {
-        guard activeCorner == nil, panStart == nil else { return }
+        guard !pinching, activeCorner == nil, panStart == nil else { return }
         let distances: [CGFloat] = handles.map { hypot($0.x - start.x, $0.y - start.y) }
         if let nearest = distances.indices.min(by: { distances[$0] < distances[$1] }),
            let minDist = distances.min(), minDist <= 44 {
@@ -201,7 +212,7 @@ struct CardQuadEditorView: View {
             loupeFocus = p
             dragPoint = raised
             quadWarning = nil
-        } else if let ps = panStart {
+        } else if let ps = panStart, !pinching {
             if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
             if didPan {
                 center = fit.panTarget(from: ps.center, translation: value.translation)

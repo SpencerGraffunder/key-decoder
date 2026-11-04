@@ -23,6 +23,8 @@ struct ReviewView: View {
     /// the adjusted point and loupe ride ABOVE the finger (Spec).
     @State private var dragPoint: CGPoint?
     private static let dragLift: CGFloat = 70
+    @State private var pinchBase: CGFloat?
+    @State private var pinching = false
     @State private var pickMode = false
 
     @State private var zoom: CGFloat = 1
@@ -231,6 +233,7 @@ struct ReviewView: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(dragGesture(fit: fit, handles: hs))
+                .simultaneousGesture(pinchGesture())
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 // Outside the clip: the bubble may spill past the frame — Spec
                 // prefers that over being squeezed inside.
@@ -372,6 +375,22 @@ struct ReviewView: View {
 
     // MARK: - One gesture for the whole frame
 
+    /// Pinch to zoom (Spec: "let me zoom and pan in that view"). Cancels any
+    /// in-progress pan so two-finger zoom never drags the image around too.
+    private func pinchGesture() -> some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                if pinchBase == nil { pinchBase = zoom; panStart = nil; didPan = false }
+                pinching = true
+                let z = (pinchBase ?? zoom) * value.magnification
+                zoom = min(max(1, z), 8)
+            }
+            .onEnded { _ in
+                pinchBase = nil
+                pinching = false
+            }
+    }
+
     private func dragGesture(fit: ImageFit, handles hs: [ReviewHandle]) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -387,7 +406,7 @@ struct ReviewView: View {
     /// Handle-grabbing is disabled during key-confirm and re-pick, so a touch
     /// anywhere (not on a handle) becomes a "tap to re-detect".
     private func grabIfNeeded(start: CGPoint, fit: ImageFit, handles hs: [ReviewHandle]) {
-        guard activeHandleID == nil, panStart == nil else { return }
+        guard !pinching, activeHandleID == nil, panStart == nil else { return }
         if !confirmStage && !pickMode {
             let distances: [CGFloat] = hs.map {
                 hypot($0.point.x - start.x, $0.point.y - start.y)
@@ -408,7 +427,7 @@ struct ReviewView: View {
             h.apply(raised)
             loupeFocus = fit.clampedToImage(raised)
             dragPoint = raised
-        } else if let ps = panStart {
+        } else if let ps = panStart, !pinching {
             if hypot(value.translation.width, value.translation.height) > 6 { didPan = true }
             if didPan {
                 center = fit.panTarget(from: ps.center, translation: value.translation)
@@ -479,18 +498,37 @@ struct ReviewView: View {
         zoomToKey()
     }
 
+    /// Zoom onto the CUT REGION (Spec: "zoom in to where the key is" — the
+    /// whole-key bbox barely zooms because the key spans the card width). The
+    /// grid around the measured cuts, padded ~1.6 spacings each side, fills
+    /// the view instead.
     private func zoomToKey() {
-        guard let bbox = flow.keyBBox(), let image = flow.correctedImage else {
+        guard let scene = flow.scene, let result = flow.result,
+              let image = flow.correctedImage else {
             fitWhole()
             return
         }
+        let blade = scene.blade
+        let spacingPx = (flow.currentSystem?.spacingIn ?? 0.15) * 25.4 * scene.pixelsPerMm
+        let uLo = (result.cuts.map(\.centerU).min() ?? blade.shoulderU) - spacingPx * 1.6
+        let uHi = (result.cuts.map(\.centerU).max() ?? blade.tipU) + spacingPx * 1.6
+        let u0 = max(blade.uMin, uLo), u1 = min(blade.uMax, uHi)
+        let spineMid = (flow.params?.spine ?? blade.spine).v(at: (u0 + u1) / 2)
+        let vMid = spineMid + blade.bladeWidthPx * 0.5
+        let vHalf = blade.bladeWidthPx * 2.6
+        let corners = [
+            blade.xy(u: u0, v: vMid - vHalf), blade.xy(u: u1, v: vMid - vHalf),
+            blade.xy(u: u1, v: vMid + vHalf), blade.xy(u: u0, v: vMid + vHalf),
+        ]
+        var bbox = CGRect(x: corners[0].x, y: corners[0].y, width: 0, height: 0)
+        for c in corners.dropFirst() { bbox = bbox.union(CGPoint(x: c.x, y: c.y)) }
         let pix = CGSize(
             width: image.cgImage?.width ?? Int(image.size.width),
             height: image.cgImage?.height ?? Int(image.size.height)
         )
         let fit = ImageFit(imageSize: pix, viewSize: viewSize)
         center = CGPoint(x: bbox.midX, y: bbox.midY)
-        zoom = fit.zoomToFit(rect: bbox, fill: 0.72, maxZoom: 3.2)
+        zoom = fit.zoomToFit(rect: bbox, fill: 0.85, maxZoom: 4.0)
         keyZoomActive = true
     }
 

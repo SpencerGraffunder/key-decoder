@@ -29,8 +29,14 @@ homography is off by millimeters for the overhang — far inside the depth
 window. Legacy unpadded mode (m = 0) remains supported for direct corrected
 images; ppm for it stays W_out / 85.60.
 
-Homography: compute 3x3 projective transform mapping the (padded) Q →
-(0,0),(W_out,0),(W_out,H_out),(0,H_out) via DLT (8-equation linear solve).
+Padding is clamped: m_eff = min(m, largest padding whose expanded quad still
+fits inside the source photo). Sampling beyond the photo clamps to smeared
+edge rows; when those read card-colored the "photo ring" background silently
+becomes card face and overhang contrast drops to zero. m_eff = 0 (card fills
+the frame) routes the whole pipeline through the legacy unpadded path; m_eff
+is returned by correct() and flows into pixelsPerMm and analyzeScene(m:).
+Homography: compute 3x3 projective transform mapping the (padded, clamped) Q
+→ (0,0),(W_out,0),(W_out,H_out),(0,H_out) via DLT (8-equation linear solve).
 Warp with inverse mapping + bilinear sampling (clamp borders).
 
 Card sanity (when the quad came from auto-detection, not the manual handles):
@@ -38,7 +44,14 @@ area fraction >= 15% of the image and aspect (long/short edge, edge-mean basis)
 in [1.30, 1.90]; BOUNDARY STRENGTH (v3): sample the gradient magnitude along
 each quad side (max within ±4 px of the side normal), keep per-side minima,
 average the middle two — confident picks need >= 25 (suggestion tier >= 10),
-so flat-background hallucination quads from Vision lose to real edges. User
+both gates scaled by min(w,h)/620 clamped to [0.45, 1] so low-resolution live
+frames keep a working finder. So flat-background hallucination quads from
+Vision lose to real edges. CAPTURE-GUIDE PRIOR: capture-time callers pass the
+guide rect (normalized 0.09,0.30,0.82,0.28); candidate scores are multiplied
+by max(0.15, exp(−1.2 d²/σ²)) where d is centroid distance to the guide
+center — the card near the guide outranks strong-edge clutter. The live key
+finder additionally falls back to the guide rect as quad when Vision finds
+nothing (dark card on dark table), so the overlay survives that failure. User
 quads from the editor skip sanity gates but get a one-tap aspect warning.
 Failing detection → manual path; a confident detection still lands in the
 corner editor with the corners pre-seeded (no silent auto-skip).
@@ -54,22 +67,34 @@ background; padded frames (m = 0.16) differ where noted.
    guarded frame edge (the photo's table/surroundings).
 3. Diff D = |g − B| inside C, |g − B_out| outside C (padded frames). A key
    overhanging the edge therefore segments against the table, teeth included.
-4. Threshold t = max(Otsu(D), clamp(3.5·sigma, 12, 80)). The floor rejects
-   soft cast shadows (15–25 levels on real captures) that plain Otsu happily
-   glues onto the key; a real key sits 60+ levels out.
+4. SPATIAL threshold (padded frames): t = max(Otsu over pixels inside C,
+   clamp(3.5·sigma, 12, 80)) as before, but pixels OUTSIDE C mask against
+   t_out = clamp(0.55·t, 20, 120) instead. One global threshold cannot serve
+   both regimes — a dark key on a dark table has ~50-level table contrast
+   while the card-side Otsu lands at 70+, and a dual-reference
+   max(|g−B|,|g−B_out|) would rate the light card itself as high-contrast
+   against a dark table and mask the whole card. The floor rejects soft cast
+   shadows (15–25 levels on real captures); a real key sits 60+ levels out.
 5. Morphological close (3x3, 2 iterations) then open (3x3, 1 iteration). On
-   padded frames clear a 3 px band along C's border and the frame border
-   first: warp seams and hard card/table steps light up there as a hairline
-   ring that would glom onto overhanging keys and poison edge sampling.
-6. detachWeakBridges: erode 2×, drop components < 0.4% area, dilate survivors
-   2 rings back, AND with the mask — specks and thin shadow bridges snap off.
+   padded frames, pixels excluded BEFORE thresholding: a 1 px band along the
+   INSIDE of C's border (warp seams, corner-rounding table slivers — wider
+   bands slice a straddling key into two components and morphology cannot
+   rebridge them; residual sliver rings are < 0.4% area and step 6 removes
+   them) and a 3 px band along the frame border (clamped-warp garbage).
+6. detachWeakBridges (padded frames only — legacy frames put the table at
+   diff≈0, so the pass would only cost): erode 2×, drop components < 0.4%
+   area, dilate survivors 2 rings back, AND with the mask — specks and thin
+   shadow bridges snap off.
 7. Connected-component pick: among components with area >= 1.5% of CARD area
-   (scale the frame fraction by (1−2m)² on padded frames), prefer the most
-   ELONGATED one — pixel-covariance aspect sqrt(λ1/λ2) >= 2.5 — scored by
-   area x (1 + 0.06·(aspect−2.5), cap +1.5) x gaussian(center distance; the
+   (scale the frame fraction by (1−2m)² on padded frames), aspect
+   sqrt(λ1/λ2) >= 2.5. Legacy score: area x (1 + 0.06·(aspect−2.5), cap
+   +1.5) x gaussian(center distance; the
    capture UI guides keys to the card center). A split ring/fob (rounder,
    sometimes larger) must not hijack the key; text bands and accessories lose
-   to center + elongation. If nothing is elongated keep the largest; below
+   to center + elongation. On padded frames scoring flips emphasis
+   (elongBoost): shape enters as ^0.1 (near-flat tie-breaker) and the center
+   gaussian is squared — an off-center seam or text ring is long and thin by
+   construction, so shape-dominant scoring hands it the key. If nothing is elongated keep the largest; below
    the area floor or aspect < 2.5 with no head → fail, manual path. A seed
    point (user "that's my key" tap) overrides the pick entirely (floor 0.4%).
 8. Fill holes (background components not connected to the image border).

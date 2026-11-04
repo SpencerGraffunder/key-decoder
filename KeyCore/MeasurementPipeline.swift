@@ -45,8 +45,11 @@ public enum MeasurementPipeline {
     public static func correct(
         photo: CGImage, quad: [CGPoint], outputWidth: Int = Perspective.defaultOutputWidth,
         marginFrac: Double = 0.16
-    ) -> (gray: GrayImage, color: RGBAImage, pixelsPerMm: Double)? {
+    ) -> (gray: GrayImage, color: RGBAImage, pixelsPerMm: Double, marginFrac: Double)? {
         let height = Perspective.outputHeight(forWidth: outputWidth)
+        // Never pad past the photo: the caller's marginFrac is an upper
+        // bound and the geometry has the final say (see clampedMarginFrac).
+        let marginFrac = min(marginFrac, clampedMargin(CGSize(width: photo.width, height: photo.height), quad: quad, requested: marginFrac))
         // Padded warp: grow the source quad about the card centroid so the
         // corrected frame carries a ring of the photo around the card. A key
         // whose teeth hang past the card edge then survives the warp instead
@@ -62,7 +65,12 @@ public enum MeasurementPipeline {
               let rgba = RGBAImage(cgImage: photo),
               let color = Perspective.warpColor(rgba, quad: source, outputWidth: outputWidth, outputHeight: height)
         else { return nil }
-        return (gray.image, color, ppm)
+        return (gray.image, color, ppm, marginFrac)
+    }
+
+    /// Clamp helper for callers that hold a quad + source size (CG-free core).
+    public static func clampedMargin(_ photoSize: CGSize, quad: [CGPoint], requested: Double) -> Double {
+        Perspective.clampedMarginFrac(requested, quad: quad, imageSize: photoSize)
     }
     #endif
 

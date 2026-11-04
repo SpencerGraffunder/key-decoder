@@ -76,12 +76,16 @@ public enum KeySegmentation {
             if let m = Statistics.median(outer), outer.count > 100 { outerInt = Int(m.rounded()) }
         }
 
-        // Per-pixel |luminance - relevant background|, Otsu-thresholded, with
-        // a contrast floor at 3.5 card-texture sigmas (clamped 12...80): soft
-        // shadows (15-25 levels) fall below the floor on real captures while
-        // a key (60+) never does.
-        var diff = [UInt8](repeating: 0, count: w * h)
-        var hist = [Int](repeating: 0, count: 256)
+        // Per-pixel |luminance - relevant background|. A dark key over a
+        // dark TABLE has weak table contrast while the same key over the
+        // light card has huge card contrast, so ONE global threshold cannot
+        // serve both regimes (and a max-of-both-reference diff would rate
+        // the light card itself as "high contrast" against a dark table and
+        // mask the entire card). Instead the threshold is spatial: Otsu is
+        // fit on CARD-region pixels only, and the photo ring outside the
+        // card gets its own relaxed threshold against the table background,
+        // so ~50-contrast overhang survives a 50+ card threshold (probe
+        // margin-overhang scenario is exactly this regime).
         // Padded frames: a few-px band around the card rect and the frame
         // edge holds warp seams and (from corner rounding) table slivers
         // inside the card rect. Those pixels must leave BOTH the mask and
@@ -89,28 +93,47 @@ public enum KeySegmentation {
         // diff ~192 adds a far mode that drags Otsu above the overhanging
         // key's diff and silently amputates the teeth (probe margin-overhang
         // caught exactly this).
-        func inBoundaryBand(_ x: Int, _ y: Int) -> Bool {
+        // Boundary handling for padded frames. INSIDE the card rect a 1-px
+        // band along its border swallows warp seams and the table slivers
+        // that corner rounding puts just inside the detected rect; keep it
+        // that thin — a wider band slices a key that straddles the card edge
+        // into two components (overhang + on-card part), and morphology
+        // cannot rebridge it (margin-overhang probe caught exactly that).
+        // OUTSIDE the card, table pixels ARE signal: that is where overhang
+        // lives, so only the frame edge (clamped-warp garbage) is cut.
+        func inBoundaryBand(_ x: Int, _ y: Int, insideCard: Bool) -> Bool {
             guard padded else { return false }
-            let dCard = min(min(abs(x - cx0), abs(x - cx1)), min(abs(y - cy0), abs(y - cy1)))
             let dFrame = min(min(x, y), min(w - 1 - x, h - 1 - y))
-            return dCard <= 3 || dFrame <= 3
+            if dFrame <= 3 { return true }
+            if !insideCard { return false }
+            let dCard = min(min(abs(x - cx0), abs(x - cx1)), min(abs(y - cy0), abs(y - cy1)))
+            return dCard <= 1
         }
+        var diff = [UInt8](repeating: 0, count: w * h)
+        var hist = [Int](repeating: 0, count: 256)
+        var histTotal = 0
         for i in 0..<(w * h) {
             let x = i % w, y = i / w
-            if inBoundaryBand(x, y) { continue }
             let insideCard = x >= cx0 && x < cx1 && y >= cy0 && y < cy1
+            if inBoundaryBand(x, y, insideCard: insideCard) { continue }
             let bgHere = padded && !insideCard ? outerInt : bgInt
             let d = abs(Int(image.pixels[i]) - bgHere)
             let v = UInt8(min(255, d))
             diff[i] = v
-            hist[Int(v)] += 1
+            if !padded || insideCard { hist[Int(v)] += 1; histTotal += 1 }
         }
         let floorT = UInt8(max(12, min(80, (3.5 * cardSigma).rounded())))
-        let t = max(otsuThreshold(histogram: hist, total: w * h), floorT)
+        let t = max(otsuThreshold(histogram: hist, total: max(histTotal, 1)), floorT)
 
         var mask = [Bool](repeating: false, count: w * h)
         if padded {
-            for i in 0..<(w * h) where diff[i] > t { mask[i] = true }
+            let outerT = UInt8(max(20, min(120, (0.55 * Double(t)).rounded())))
+            for i in 0..<(w * h) {
+                let x = i % w, y = i / w
+                let insideCard = x >= cx0 && x < cx1 && y >= cy0 && y < cy1
+                if insideCard { if diff[i] > t { mask[i] = true } }
+                else if diff[i] > outerT { mask[i] = true }
+            }
         } else {
             for y in 0..<h {
                 let inCardY = y >= margin && y < h - margin
@@ -123,7 +146,10 @@ public enum KeySegmentation {
 
         mask = Morphology.close(mask, w, h, iterations: 2)
         mask = Morphology.open(mask, w, h, iterations: 1)
-        ConnectedComponents.detachWeakBridges(&mask, w, h)
+        // Only padded frames can bridge the key to the photo ring; legacy
+        // frames put the table at diff≈0 where the bridge pass would find
+        // nothing but its own cost.
+        if padded { ConnectedComponents.detachWeakBridges(&mask, w, h) }
 
         // Elongation-aware pick: an on-card ring/fob must not hijack the key;
         // on padded frames the card-center prior adds a mild boost (the key
@@ -142,7 +168,8 @@ public enum KeySegmentation {
             (blob, area, _) = ConnectedComponents.bestKeyComponent(
                 mask, w, h,
                 center: center,
-                centerSigma: 0.5 * diag
+                centerSigma: 0.5 * diag,
+                elongBoost: padded ? 0.1 : 1.0
             )
             let cardAreaFraction = padded ? (1 - 2 * marginFrac) * (1 - 2 * marginFrac) : 1.0
             let fraction = Double(area) / Double(w * h)
