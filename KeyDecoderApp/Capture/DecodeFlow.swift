@@ -96,7 +96,7 @@ final class DecodeFlow {
     }
 
     private func detectCard(in cg: CGImage) async {
-        let guide = CaptureGuide.photoRect(previewAspect: CaptureController.lastPreviewAspect)
+        let guide = CaptureGuide.photoRect(previewAspect: CameraController.lastPreviewAspect)
         let found = await Task.detached(priority: .userInitiated) {
             CardDetector.detect(in: cg, prior: guide)
         }.value

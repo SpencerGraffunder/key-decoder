@@ -86,11 +86,9 @@ struct CameraSheet: View {
                 .padding(.trailing, 6)
                 .padding(.top, 8)
                 Spacer()
-                Text("Hold the phone UPRIGHT (portrait). Key flat inside the dashed outline, brand side up and readable, BOW (handle) to the LEFT. Ring can stay on; the bow may hang off the card as long as the cut row sits on it.")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .padding(8)
-                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                // Feedback text removed: it sat under the flashlight /
+                // corner buttons. The dashed guide + live overlay carry the
+                // instruction now.
                 controls
             }
             .padding()
@@ -530,7 +528,7 @@ struct CameraPreview: UIViewRepresentable {
     func updateUIView(_ uiView: PreviewView, context: Context) {
         controller.previewLayer = uiView.previewLayer
         if uiView.bounds.height > 0 {
-            CaptureController.lastPreviewAspect = uiView.bounds.width / uiView.bounds.height
+            CameraController.lastPreviewAspect = uiView.bounds.width / uiView.bounds.height
         }
     }
 
