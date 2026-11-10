@@ -34,6 +34,15 @@ final class DecodeFlow {
     var params: CutGridParams?
     var warnings: [MeasurementPipeline.PipelineWarning] = []
     var pixelsPerMm = Perspective.pixelsPerMm()
+    /// Display rotation (radians, KeyLeveling convention) that makes the
+    /// detected key's spine horizontal, blade below (issue #4). Set with each
+    /// successful key pick; the review screen feeds it to ImageFit so image,
+    /// glow, markers and loupe all rotate through one mapping. Measurement
+    /// geometry stays in corrected-image space; manual drags never re-rotate.
+    private(set) var levelAngle: CGFloat?
+    /// `correctedImage` baked with `levelAngle` — what the result screen shows
+    /// and what gets saved, so gallery thumbnails/detail are leveled too.
+    private(set) var leveledImage: UIImage?
     /// Pure manual fallback (segmentation failed): digits entered by hand.
     var manualDigits: [Int] = []
 
@@ -199,12 +208,15 @@ final class DecodeFlow {
             systemID = system.id
             result = nil
             params = nil
+            levelAngle = nil
+            leveledImage = nil
             step = .cardEditor
             return
         }
 
         scene = outcome.scene
         correctedImage = outcome.color.toCGImage().map { UIImage(cgImage: $0) }
+        applyLeveling(blade: outcome.scene.blade)
         pixelsPerMm = outcome.pixelsPerMm
         suggestions = outcome.suggestions
         result = outcome.result
@@ -282,6 +294,7 @@ final class DecodeFlow {
             scene = rebuilt.scene
             pixelsPerMm = rebuilt.scene.pixelsPerMm
             correctedImage = rebuilt.color.toCGImage().map { UIImage(cgImage: $0) }
+            applyLeveling(blade: rebuilt.scene.blade)
             suggestions = rebuilt.suggestions
             result = rebuilt.out.result
             params = rebuilt.out.result.params
@@ -382,12 +395,24 @@ final class DecodeFlow {
         }
     }
 
+    /// Fix the key-leveling rotation for this pick and bake the display/save
+    /// copy. One angle per pick: dragging spine/cut markers must NOT live-rotate
+    /// the view (the drag math would chase the rotating mapping), and a re-pick
+    /// recomputes from the fresh blade analysis.
+    private func applyLeveling(blade: BladeAnalysis) {
+        let angle = KeyLeveling.levelAngle(blade: blade)
+        levelAngle = CGFloat(angle)
+        leveledImage = correctedImage.map { $0.rotatedToLevel(angle: CGFloat(angle)) }
+    }
+
     func retake() {
         // Move away from every screen that renders from this state FIRST —
         // observers may re-render per mutation, not per batch.
         step = .capture
         quad = nil
         correctedImage = nil
+        levelAngle = nil
+        leveledImage = nil
         scene = nil
         result = nil
         params = nil
@@ -408,6 +433,33 @@ extension UIImage {
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// Copy rotated about the image center by `angle` radians (KeyLeveling
+    /// convention, issue #4). The canvas EXPANDS to the rotated bounds so key
+    /// teeth are never clipped; padding is filled with systemBackground
+    /// (JPEG carries no alpha). Uses the same y-down rotation matrix as
+    /// `ImageFit.viewTransform`, so display and saved bytes agree.
+    func rotatedToLevel(angle: CGFloat) -> UIImage {
+        guard angle != 0 else { return self }
+        let c = abs(CGFloat(cos(Double(angle))))
+        let s = abs(CGFloat(sin(Double(angle))))
+        let newSize = CGSize(
+            width: size.width * c + size.height * s,
+            height: size.width * s + size.height * c
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
+        return renderer.image { ctx in
+            UIColor.systemBackground.setFill()
+            ctx.fill(CGRect(origin: .zero, size: newSize))
+            let cg = ctx.cgContext
+            cg.translateBy(x: newSize.width / 2, y: newSize.height / 2)
+            cg.rotate(by: angle)
+            cg.translateBy(x: -size.width / 2, y: -size.height / 2)
             draw(in: CGRect(origin: .zero, size: size))
         }
     }
