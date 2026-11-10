@@ -201,15 +201,24 @@ struct ReviewView: View {
                     width: image.cgImage?.width ?? Int(image.size.width),
                     height: image.cgImage?.height ?? Int(image.size.height)
                 )
-                let fit = ImageFit(imageSize: pix, viewSize: geo.size, zoom: zoom, center: center)
+                let fit = ImageFit(
+                    imageSize: pix, viewSize: geo.size,
+                    zoom: zoom, center: center, rotation: flow.levelAngle ?? 0
+                )
                 let hs = makeHandles(result: result, fit: fit)
                 ZStack(alignment: .topLeading) {
                     Canvas { context, _ in
+                        // Image + glow share ONE affine (issue #4: the view is
+                        // rotated so the key spine is level); overlays go
+                        // through fit.toView, which matches this transform.
+                        var ctx = context
+                        ctx.transform = fit.viewTransform
+                        let rect = CGRect(origin: .zero, size: pix)
                         if let cg = image.cgImage {
-                            context.draw(Image(decorative: cg, scale: 1), in: fit.imageRectInView)
+                            ctx.draw(Image(decorative: cg, scale: 1), in: rect)
                         }
                         if let glow {
-                            context.draw(Image(decorative: glow, scale: 1), in: fit.imageRectInView)
+                            ctx.draw(Image(decorative: glow, scale: 1), in: rect)
                         }
                     }
 
@@ -530,7 +539,7 @@ struct ReviewView: View {
             width: image.cgImage?.width ?? Int(image.size.width),
             height: image.cgImage?.height ?? Int(image.size.height)
         )
-        let fit = ImageFit(imageSize: pix, viewSize: viewSize)
+        let fit = ImageFit(imageSize: pix, viewSize: viewSize, rotation: flow.levelAngle ?? 0)
         center = CGPoint(x: bbox.midX, y: bbox.midY)
         zoom = fit.zoomToFit(rect: bbox, fill: 0.85, maxZoom: 4.0)
         keyZoomActive = true

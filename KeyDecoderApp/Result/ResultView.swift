@@ -18,7 +18,9 @@ struct ResultView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 hero
-                if let image = flow.correctedImage {
+                // Leveled copy when available (issue #4) — what the library
+                // will store, so result and gallery always agree.
+                if let image = flow.leveledImage ?? flow.correctedImage {
                     Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -160,7 +162,7 @@ struct ResultView: View {
             systemID: system.id,
             systemName: system.name,
             photoFile: flow.photo.flatMap { ImageStore.save($0) },
-            correctedFile: flow.correctedImage.flatMap { ImageStore.save($0) }
+            correctedFile: (flow.leveledImage ?? flow.correctedImage).flatMap { ImageStore.save($0) }
         )
         record.snapshot = snapshot
         context.insert(record)

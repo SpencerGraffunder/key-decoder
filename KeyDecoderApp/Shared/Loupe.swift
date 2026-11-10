@@ -18,13 +18,17 @@ struct Loupe: View {
             let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
             context.clip(to: Path(ellipseIn: CGRect(origin: .zero, size: canvasSize)))
             let s = fit.scale * zoom
-            let rect = CGRect(
-                x: center.x - focus.x * s,
-                y: center.y - focus.y * s,
-                width: CGFloat(image.width) * s,
-                height: CGFloat(image.height) * s
+            // Draw through the fit's rotation so the bubble shows the SAME
+            // orientation the (key-leveled) review view shows on screen.
+            var ctx = context
+            ctx.transform = CGAffineTransform(translationX: center.x, y: center.y)
+                .scaledBy(x: s, y: s)
+                .rotated(by: fit.rotation)
+                .translatedBy(x: -focus.x, y: -focus.y)
+            ctx.draw(
+                Image(decorative: image, scale: 1),
+                in: CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height))
             )
-            context.draw(Image(decorative: image, scale: 1), in: rect)
             var cross = Path()
             cross.move(to: CGPoint(x: center.x - 18, y: center.y))
             cross.addLine(to: CGPoint(x: center.x + 18, y: center.y))
