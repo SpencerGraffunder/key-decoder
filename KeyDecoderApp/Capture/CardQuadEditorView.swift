@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KeyCore
 
 /// Four draggable handles to place on the reference card's corners — the manual
 /// fallback whenever Vision cannot find the card (or the user prefers manual).
@@ -47,12 +48,18 @@ struct CardQuadEditorView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Text(flow.statusMessage.isEmpty
-                 ? "Drag the four rings onto the corners of the reference card."
-                 : flow.statusMessage)
-                .font(.callout)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            VStack(spacing: 4) {
+                detectionBanner
+                if !flow.statusMessage.isEmpty {
+                    // Where the corners came from (key-shape scan, guide
+                    // outline, or a retry note) — detail below the state line.
+                    Text(flow.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(.horizontal)
 
             GeometryReader { geo in
                 let pix = Self.pixelSize(of: image)
@@ -132,6 +139,15 @@ struct CardQuadEditorView: View {
             }
 
             Button {
+                resetCorners()
+            } label: {
+                Label("Reset corners", systemImage: "arrow.counterclockwise")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal)
+
+            Button {
                 if quadWarning == nil, let w = Self.quadAspectWarning(quad) {
                     // First tap on a non-card-shaped quad only warns — the
                     // second tap confirms anyway. Never a dead end (Spec).
@@ -158,6 +174,56 @@ struct CardQuadEditorView: View {
             .overlay(Circle().fill(color).frame(width: 5, height: 5))
             .frame(width: 34, height: 34)
             .shadow(radius: 2)
+    }
+
+    // MARK: - Detection banner
+
+    /// Always-visible detection-state line (issue #3): the manual correction
+    /// step must never be mistakable for an auto-skip, whatever happened
+    /// upstream. Kept as tiny helper subviews — a ternary chain in one
+    /// expression trips the SwiftUI type-checker budget in CI.
+    @ViewBuilder
+    private var detectionBanner: some View {
+        if flow.cardDetectionFailed {
+            bannerLine(
+                text: "Card not found — place the four corners on the card by hand.",
+                systemImage: "hand.draw",
+                tint: .orange
+            )
+        } else {
+            bannerLine(
+                text: "Card found automatically — check the rings sit on the card's corners.",
+                systemImage: "checkmark.circle.fill",
+                tint: .green
+            )
+        }
+    }
+
+    private func bannerLine(text: String, systemImage: String, tint: Color) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.callout)
+            .foregroundStyle(tint)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
+    }
+
+    // MARK: - Reset
+
+    /// Discard the seeded corners (which may be confident garbage), restore
+    /// the guide-outline quad the viewfinder showed, and zoom out to the
+    /// whole photo — so manual correction stays easy even when
+    /// auto-detection placed badly-placed rings (issue #3).
+    private func resetCorners() {
+        let pix = Self.pixelSize(of: image)
+        let guide = CaptureGuide.photoRect(previewAspect: CameraController.lastPreviewAspect)
+        quad = CaptureGuide.quad(in: pix, normalized: guide)
+        quadWarning = nil
+        withAnimation(.snappy) {
+            zoom = 1
+            center = nil
+            zoomedToCard = false
+        }
     }
 
     /// Sanity-check the marked quad against credit-card proportions

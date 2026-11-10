@@ -100,22 +100,17 @@ final class DecodeFlow {
         let found = await Task.detached(priority: .userInitiated) {
             CardDetector.detect(in: cg, prior: guide)
         }.value
-        if let d = found, d.confident {
-            // Always route through the corner editor (Spec: auto-skip jumped
-            // straight to a badly-placed quad). The editor opens zoomed on the
-            // card with these corners pre-seeded, so a good detection is one
-            // "Use card" tap away.
-            self.quad = d.quad
-            cardDetectionFailed = false
-            statusMessage = "Card found — check the corner rings, then Use card."
-            step = .cardEditor
-        } else if let d = found {
-            // Low-confidence detection: seed the editor with the suggested
-            // corners — confirming or nudging beats dragging four blanks, and
-            // a suggestion is never auto-applied.
+        if let d = found {
+            // Every detection — confident or not — only PRE-SEEDS the editor
+            // and lands on the manual correction step below. The editor opens
+            // zoomed on the card with these corners, so a good detection is
+            // one "Use card" tap away, and a suggestion is never auto-applied
+            // (Spec: auto-skip jumped straight to a badly-placed quad, #3).
             quad = d.quad
             cardDetectionFailed = false
-            step = .cardEditor
+            // The editor banner states the card was found; this caption only
+            // adds what the banner can't say (the detection was shaky).
+            statusMessage = d.confident ? "" : "Low confidence — double-check the ring placement."
         } else {
             // Nothing found (a dark metal card on a dark table defeats even
             // relaxed Vision). The user was told to line the card up with
@@ -140,11 +135,16 @@ final class DecodeFlow {
             }
             quad = bestQuad ?? CaptureGuide.quad(in: size, normalized: guide)
             cardDetectionFailed = true
+            // The banner states the card was NOT found; this caption says
+            // where the fallback corners came from.
             statusMessage = bestQuad != nil
-                ? "Card not found — corners placed where the key shape appeared. Check the rings, then Use card."
-                : "Card not found — corners set where the guide outline was. Check the rings, then Use card."
-            step = .cardEditor
+                ? "Corners placed where a key-sized shape appeared in the photo."
+                : "Corners set where the guide outline was in the viewfinder."
         }
+        // Manual correction is never skippable (issue #3): exactly ONE step
+        // transition here, after the seed is chosen, so no branch can bypass
+        // the corner editor now or when new branches are added later.
+        step = .cardEditor
     }
 
     func confirmQuad(_ newQuad: [CGPoint]) {
