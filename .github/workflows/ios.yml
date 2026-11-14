@@ -156,6 +156,18 @@ jobs:
               --notes "Build ${APP_BUILD} of ${APP_VERSION}. Version visible in LiveContainer = CFBundleShortVersionString ${APP_VERSION} (${APP_BUILD}). Unsigned .ipa — re-sign with Sideloadly / AltStore / an ad-hoc profile to install."
           fi
           gh release view "$TAG"
+          # Newest-only policy (2026-11-14, Spec standing rule): hub + iCloud
+          # keep ONLY the current build. Prune superseded versioned releases
+          # (the yy.m.d-<run> pattern never matches legacy or upstream-style
+          # tags — those are cleaned manually, not by CI).
+          OLD_TAGS=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                      --jq '.[].tag_name' \
+                    | grep -E '^[0-9]{2}\.[0-9]+\.[0-9]+-[0-9]+$' \
+                    | grep -v -x "$TAG" || true)
+          for OLD in $OLD_TAGS; do
+            echo "Pruning superseded release $OLD"
+            gh release delete "$OLD" --yes --cleanup-tag
+          done
 
       - name: Mirror .ipa to iCloud Drive
         continue-on-error: true
@@ -167,4 +179,8 @@ jobs:
           DEST="$HOME/Library/Mobile Documents/com~apple~CloudDocs/IPAs"
           mkdir -p "$DEST"
           cp -f "$ASSET" "$DEST/$ASSET"
+          # Newest-only policy: drop superseded KeyDecoder builds from the
+          # shared collection folder (KeyDecoder prefix only — other apps'
+          # files are pruned by their own pipelines).
+          find "$DEST" -maxdepth 1 -type f -name 'KeyDecoder*.ipa' ! -name "$ASSET" -delete
           ls -lh "$DEST"
